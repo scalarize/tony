@@ -33,7 +33,7 @@ class RecordClassFinder
 				$currentTarget = $target . '/' . $item;
 				foreach (self::findExtendingClass($currentTarget) as $name => $classInfo) {
 					if (isset($ret[$name])) {
-						$this->addWarning($currentTarget, $name, $classInfo, 'duplicate class found');
+						Warning::addWarning($currentTarget, $name, $classInfo, 'duplicate class found');
 						continue;
 					}
 					$ret[$name] = $classInfo;
@@ -65,41 +65,25 @@ class RecordClassFinder
 		$classes = $this->findExtendingClass($this->target);
 		$recordClasses = [];
 		foreach ($classes as $name => $classInfo) {
-			if (isset($recordClasses[$name])) {
-				// already traversed by one of its children
-				continue;
-			}
 			$parent = $classInfo->getParentIdentifier();
+			$isRecordClass = false;
 			while (true) {
-				$classInfo->addAncestor($parent);
-				if ($parent == 'CActiveRecord') {
+				if (strtolower($parent) == 'cactiverecord') {
+					$isRecordClass = true;
 					break;
 				}
 				if (!isset($classes[$parent])) {
 					break;
 				}
+				$classInfo->addAncestor($classes[$parent]);
+				$classes[$parent]->addChild($classInfo);
 				$parent = $classes[$parent]->getParentIdentifier();
 			}
-			$ancestors = $classInfo->getAncestors();
-			$len = count($ancestors);
-			if ($len >= 1 && $ancestors[$len - 1] == 'CActiveRecord') {
-				$recordClasses[$name] = $classes[$name];
-				for ($i = 0; $i < $len - 1; $i++) {
-					$ancestor = $ancestors[$i];
-					$classes[$ancestor]->addAncestors(array_slice($ancestors, $i + 1));
-					$classes[$ancestor]->addChild($name);
-				}
+			if ($isRecordClass) {
+				$recordClasses[$name] = $classInfo;
 			}
 		}
 		return $recordClasses;
-	}
-
-	public function addWarning(string $fileName, string $className, ClassInfo $classInfo, string $message = '') {
-		$this->warnings []= new Warning($fileName, $className, $classInfo, $message);
-	}
-
-	public function getWarnings() {
-		return $this->warnings;
 	}
 
 }

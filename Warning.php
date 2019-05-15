@@ -5,6 +5,11 @@ namespace TonyParser;
 
 class Warning
 {
+
+	static $warnings = [];
+
+	static $colors;
+
 	protected $file;
 	protected $className;
 	protected $classInfo;
@@ -17,12 +22,31 @@ class Warning
 		$this->message = $message;
 	}
 
+	public function getColoredString(string $message, string $foreColor, string $bgColor = null) {
+		if (null == self::$colors) {
+			self::$colors = new Colors();
+		}
+		return self::$colors->getColoredString($message, $foreColor, $bgColor);
+	}
+
 	public function getShellExpr(bool $verboseMode = false) {
-		$ret = "WARNING: " . $this->message . "\n  from file (" . $this->file . ")\n";
+		$ret = sprintf("%s: %s\n  class: %s\n  file: %s\n",
+				$this->getColoredString("WARNING", 'red'), $this->message,
+				$this->getColoredString($this->className, 'cyan'),
+				$this->getColoredString($this->file, 'yellow'));
 		if ($verboseMode) {
-			$ret .= "  " . var_export($this->classInfo, true) . "\n";
+			$ret .= "  " . var_export($this->classInfo->getClass(), true) . "\n";
 		}
 		return $ret;
 	}
+
+	public static function addWarning(string $fileName, string $className, ClassInfo $classInfo, string $message = '') {
+		self::$warnings []= new Warning($fileName, $className, $classInfo, $message);
+	}
+
+	public static function getWarnings() {
+		return self::$warnings;
+	}
+
 
 }
