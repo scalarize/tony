@@ -14,7 +14,7 @@ use PhpParser\{Parser, ParserFactory};
 class RecordClassFinder
 {
 
-	protected $warnings = [];
+	protected $target;
 
 	public function __construct($target) {
 		if (!file_exists($target)) {
@@ -25,13 +25,12 @@ class RecordClassFinder
 
 	protected function findExtendingClass($target) {
 		$ret = [];
-		$parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP5); # or PREFER_PHP7, if your code is pure php7
 		if (is_dir($target)) {
 			foreach (scandir($target) as $item) {
 				if ($item === '.') continue;
 				if ($item === '..') continue;
 				$currentTarget = $target . '/' . $item;
-				foreach (self::findExtendingClass($currentTarget) as $name => $classInfo) {
+				foreach ($this->findExtendingClass($currentTarget) as $name => $classInfo) {
 					if (isset($ret[$name])) {
 						Warning::addWarning($currentTarget, $name, $classInfo, 'duplicate class found');
 						continue;
@@ -48,6 +47,7 @@ class RecordClassFinder
 			return $ret;
 		}
 
+		$parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP5); # or PREFER_PHP7, if your code is pure php7
 		$nodes = $parser->parse(file_get_contents($target));
 
 		$nodeFinder = new NodeFinder;

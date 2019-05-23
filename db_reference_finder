@@ -1,15 +1,19 @@
+#!/usr/bin/env php
 <?php declare(strict_types=1);
 /** vim: set noet ts=4 sw=4 fdm=indent: */
 
 require 'vendor/autoload.php';
+
 require 'RecordClassFinder.php';
 require 'ClassInfo.php';
 require 'Warning.php';
 require 'Colors.php';
 
+require 'DBCallFinder.php';
+
 use PhpParser\{Node, NodeFinder};
 use PhpParser\{Parser, ParserFactory};
-use TonyParser\{RecordClassFinder, ClassInfo, Warning};
+use TonyParser\{RecordClassFinder, ClassInfo, Warning, DBCallFinder};
 
 function usage() {
 	global $argv;
@@ -32,9 +36,18 @@ if (count($argv) >= 4 && $argv[3]) {
 	$debug = true;
 }
 
-$finder = new RecordClassFinder($target);
+echo "finding sql commands ... \n";
+$finder = new DBCallFinder($target);
+$finder->traverse();
+$dbCalls = $finder->getDBCalls();
+echo "  found " . count($dbCalls) . " sql commands ... \n";
+
+foreach ($dbCalls as $dbCall) {
+	var_dump($dbCall);
+}
 
 echo "finding record classes ... \n";
+$finder = new RecordClassFinder($target);
 $recordClasses = $finder->findRecordClasses();
 echo "  found " . count($recordClasses) . " record classes ... \n";
 

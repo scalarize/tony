@@ -5,7 +5,12 @@ use PhpParser\Node;
 
 namespace TonyParser;
 
-class ClassInfo
+abstract class NodeInfo
+{
+	abstract public function getNode();
+}
+
+class ClassInfo extends NodeInfo
 {
 
 	protected $cls;
@@ -16,6 +21,11 @@ class ClassInfo
 	public function __construct($cls, $file) {
 		$this->cls = $cls;
 		$this->file = $file;
+	}
+
+	public function getNode()
+	{
+		return $this->getClass();
 	}
 
 	public function getClass() {
@@ -157,3 +167,4 @@ class ClassInfo
 	}
 	
 }
+

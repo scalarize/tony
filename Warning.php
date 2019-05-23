@@ -11,14 +11,14 @@ class Warning
 	static $colors;
 
 	protected $file;
-	protected $className;
-	protected $classInfo;
+	protected $nodeName;
+	protected $nodeInfo;
 	protected $message;
 
-	public function __construct(string $fileName, string $className, ClassInfo $classInfo, string $message = '') {
+	public function __construct(string $fileName, string $nodeName, object $nodeInfo, string $message = '') {
 		$this->file = $fileName;
-		$this->className = $className;
-		$this->classInfo = $classInfo;
+		$this->nodeName = $nodeName;
+		$this->nodeInfo = $nodeInfo;
 		$this->message = $message;
 	}
 
@@ -30,18 +30,18 @@ class Warning
 	}
 
 	public function getShellExpr(bool $verboseMode = false) {
-		$ret = sprintf("%s: %s\n  class: %s\n  file: %s\n",
+		$ret = sprintf("%s: %s\n  node: %s\n  file: %s\n",
 				$this->getColoredString("WARNING", 'red'), $this->message,
-				$this->getColoredString($this->className, 'cyan'),
+				$this->getColoredString($this->nodeName, 'cyan'),
 				$this->getColoredString($this->file, 'yellow'));
 		if ($verboseMode) {
-			$ret .= "  " . var_export($this->classInfo->getClass(), true) . "\n";
+			$ret .= "  " . var_export($this->nodeInfo->getNode(), true) . "\n";
 		}
 		return $ret;
 	}
 
-	public static function addWarning(string $fileName, string $className, ClassInfo $classInfo, string $message = '') {
-		self::$warnings []= new Warning($fileName, $className, $classInfo, $message);
+	public static function addWarning(string $fileName, string $nodeName, object $nodeInfo, string $message = '') {
+		self::$warnings []= new Warning($fileName, $nodeName, $nodeInfo, $message);
 	}
 
 	public static function getWarnings() {
