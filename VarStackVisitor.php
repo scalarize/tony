@@ -26,14 +26,16 @@ class VarStackVisitor extends NodeVisitorAbstract
 	protected $varStacks = [];
 	protected $currentClass;
 	protected $currentMethod;
+	protected $classStack;
 
 	public function __construct($target)
 	{
 		if (!file_exists($target)) {
-			throw new Exception('no such file: ' . $target);
+			throw new \Exception('no such file: ' . $target);
 		}
 		$this->target = $target;
 		$this->state = self::NOT_STARTED;
+		$this->classStack = [];
 	}
 
 	public function beforeTraverse(array $nodes)
@@ -48,12 +50,16 @@ class VarStackVisitor extends NodeVisitorAbstract
 	{
 		$node = array_pop($this->nodeStack);
 		if ($node instanceof Node\Stmt\Class_) {
-			$this->varStacks[$this->currentClass->name->name] = $this->vars;
-			$this->vars = []; 
+			if ($this->vars['class']) {
+				$this->varStacks[$this->currentClass->name->name] = $this->vars['class'];
+				$this->vars['class'] = []; 
+			}
 			$this->currentClass = null;
 		} elseif ($node instanceof Node\Stmt\ClassMethod) {
-			$this->varStacks[$this->currentClass->name->name . '::' . $this->currentMethod->name->name] = $this->vars;
-			$this->vars = []; 
+			if ($this->vars['method']) {
+				$this->varStacks[$this->currentClass->name->name . '::' . $this->currentMethod->name->name] = $this->vars['method'];
+				$this->vars['method'] = []; 
+			}
 			$this->currentMethod = null;
 		}
 	}
@@ -67,16 +73,15 @@ class VarStackVisitor extends NodeVisitorAbstract
 		if ($node instanceof Node\Stmt\Class_) {
 			$this->currentClass = $node;
 			$this->state = self::CLASS_INSIDE;
+			$this->registerClass($node);
 		} elseif ($node instanceof Node\Stmt\ClassMethod) {
 			$this->currentMethod = $node;
 			$this->state = self::METHOD_INSIDE;
 			// method params are local vars
 			foreach ($node->params as $param) {
-				// TODO, mark as special type
 				$this->registerVar($param->var, $param);
 			}
-		}
-		if ($node instanceof Node\Expr\Assign) {
+		} elseif ($node instanceof Node\Expr\Assign) {
 			if ($node->var instanceof Node\Expr\List_) {
 				// list($vars) = ...
 				for ($i = 0, $cnt = count($node->var->items); $i < $cnt; ++$i) {
@@ -89,22 +94,108 @@ class VarStackVisitor extends NodeVisitorAbstract
 			} else {
 				$this->registerVar($node->var, $node->expr);
 			}
+		} elseif ($node instanceof Node\Stmt\Foreach_) {
+			// TODO, remove these vars after leaveNode
+			switch ($node->expr->getType()) {
+			case 'Expr_Variable':
+			case 'Expr_PropertyFetch':
+			case 'Expr_StaticPropertyFetch':
+			case 'Expr_ArrayDimFetch':
+				$arrName = $this->getVarIdentifier($node->expr);
+				$arr = $this->getVar($arrName, $node->getStartLine());
+				if (null == $arr) {
+					// FIXME, ignore
+					// $this->debug($node->expr, 'cannot find foreach array for name: ' . $arrName);
+					return;
+				}
+				$this->registerForeachVars($node, $arr);
+				break;
+			case 'Expr_Array':
+				$this->registerForeachVars($node, $node->expr);
+				break;
+			case 'Expr_FuncCall':
+			case 'Expr_StaticCall':
+			case 'Expr_MethodCall':
+				// FIXME, 暂时没办法拆解, 只好先原样注册
+				$this->registerForeachVars($node, $node->expr);
+				break;
+			default:
+				$this->debug($node->expr, 'unknown foreach array var type: ' . $node->expr->getType());
+				break;
+			}
+		} elseif ($node instanceof Node\Stmt\ClassConst) {
+			foreach ($node->consts as $const) {
+				$this->registerVar($const, $const->value);
+			}
 		}
 		return null;
 	}
 
-	protected function registerVar($var, $expr)
+	protected function registerForeachVars($node, $arr)
+	{
+		if ($arr instanceof Node\Expr\Array_ && count($arr->items) > 0) {
+			if ($node->keyVar !== null) {
+				$this->registerVar($node->keyVar, $arr->items[0]->key);
+			}
+			$this->registerVar($node->valueVar, $arr->items[0]->value);
+		} else {
+			// FIXME, 临时方案, 把整个数组作为 var 对象, 先用一下
+			if ($node->keyVar !== null) {
+				$this->registerVar($node->keyVar, $arr, 'FOREACH_KEY');
+			}
+			$this->registerVar($node->valueVar, $arr, 'FOREACH_VALUE');
+		}
+	}
+
+	protected function registerVar($var, $expr, $tag = null)
 	{
 		$varName = $this->getVarIdentifier($var);
 		if ($varName) {
 			$prefix = '';
 			switch ($this->state) {
 			case self::CLASS_INSIDE:
+				$domain = 'class';
 				$prefix = $this->currentClass->name->name . '::';
 				break;
+			case self::METHOD_INSIDE:
+				$domain = 'method';
+				break;
+			default:
+				$domain = 'global';
+				break;
 			}
-			$this->vars[$prefix . $varName] = $expr;
+			$varName = $prefix . $varName;
+			if (!isset($this->vars[$domain])) $this->vars[$domain] = [];
+			if (!isset($this->vars[$domain][$varName])) $this->vars[$domain][$varName] = [];
+			if ($tag !== null) {
+				// TODO, ensure tag is not with conflict with other attribute usages
+				$expr->setAttribute('tag', $tag);
+			}
+			$this->vars[$domain][$varName] []= $expr;
 		}
+	}
+
+	protected function getVar($varName, $beforeLineNumber)
+	{
+		foreach (['method', 'class', 'global'] as $domain) {
+			if (!isset($this->vars[$domain][$varName])) return null;
+			for ($i = count($this->vars[$domain][$varName]) - 1; $i >= 0; $i--) {
+				$var = $this->vars[$domain][$varName][$i];
+				// TODO, ensure '<=' versus '<'
+				if ($var->getStartLine() <= $beforeLineNumber) {
+					return $var;
+				}
+			}
+		}
+		return null;
+	}
+
+	protected function getGlobalVar($varName, $classOrFile)
+	{
+		if (!isset($this->varStacks[$classOrFile])) return null;
+		if (!isset($this->varStacks[$classOrFile][$varName])) return null;
+		$vars = $this->varStacks[$classOrFile][$varName];
+		return $vars[count($vars) - 1];
 	}
 
 	public function afterTraverse(array $nodes)
@@ -164,94 +255,82 @@ class VarStackVisitor extends NodeVisitorAbstract
 			return $var->name;
 		} elseif ($var instanceof Node\Expr\ArrayDimFetch) {
 			return null;
+		} elseif ($var instanceof Node\Expr\StaticCall) {
+			$className = implode('\\', $var->class->parts);
+			$methodName = $var->name->name;
+			$args = [];
+			foreach ($var->args as $arg) {
+				$args []= $this->getVarIdentifier($arg->value);
+			}
+			return sprintf('%s::%s(%s)', $className, $methodName, implode(',', $args));
+		} elseif ($var instanceof Node\Expr\MethodCall) {
+			$varName = $this->getVarIdentifier($var->var);
+			$methodName = $var->name->name;
+			$args = [];
+			foreach ($var->args as $arg) {
+				$args []= $this->getVarIdentifier($arg->value);
+			}
+			return sprintf('%s->%s(%s)', $varName, $methodName, implode(',', $args));
+		} elseif ($var instanceof Node\Const_) {
+			return $var->name->name;
 		}
 		$this->debug($var, 'unknown var type');
 	}
 
-	protected function getValueExpression(Node\Expr $expr, string $varName = null)
+	protected function removeTagsForDump(Node $node)
 	{
-		if ($expr instanceof Node\Expr\BinaryOp) {
-			if ($expr instanceof Node\Expr\BinaryOp\Concat) {
-				// $a . $b
-				return $this->getValueExpression($expr->left) . $this->getValueExpression($expr->right);
-			} elseif ($expr instanceof Node\Expr\BinaryOp\Div) {
-				// $a / $b
-				return $this->getValueExpression($expr->left) . '/' . $this->getValueExpression($expr->right);
-			} else {
-				$this->debug($expr, 'unsupported binary op type');
+		$node->setAttribute('parent', null);
+		foreach ($node as $key => $val) {
+			if ($val instanceof Node) {
+				$this->removeTagsForDump($val);
 			}
-
-		} elseif ($expr instanceof \Node\Expr\Cast) {
-			// ignore all casts
-			return $this->getValueExpression($expr->expr);
-
-		} elseif ($expr instanceof Node\Scalar) {
-			if ($expr instanceof Node\Scalar\Encapsed) {
-				$ret = '';
-				foreach ($expr->parts as $part) {
-					$ret .= $this->getValueExpression($part);
-				}
-				return $ret;
-			} else {
-				return $expr->value;
-			}
-
-		} elseif ($expr instanceof Node\Expr\FuncCall && count($expr->name->parts) == 1) {
-			$func = $expr->name->parts[0];
-			switch ($func) {
-			case 'implode':
-				$varName = $this->getVarIdentifier($expr->args[1]->value);
-				return sprintf('"%s0"%s"%s1"', $varName, $this->getValueExpression($expr->args[0]->value), $varName);
-			default:
-				// TODO
-				$args = [];
-				foreach ($expr->args as $arg) {
-					$args []= str_replace('"', '', $this->getValueExpression($arg->value));
-				}
-				return sprintf('"%s(%s)"', $func, implode(',', $args));
-			}
-
-		} elseif ($expr instanceof Node\Expr\PropertyFetch
-					|| $expr instanceof Node\Expr\Variable) {
-			$varName = $this->getVarIdentifier($expr);
-			if (isset($this->vars[$varName])) {
-				if ($this->vars[$varName] instanceof Node\Param) {
-					return '$param::' . $varName;
-				} else {
-					return $this->getValueExpression($this->vars[$varName]);
-				}
-			} else {
-				$this->debug($expr, 'unknown var name, may be dangerous');
-			}
-		} elseif ($expr instanceof Node\Expr\MethodCall) {
-			$args = [];
-			foreach ($expr->args as $arg) {
-				$args []= str_replace('"', '', $this->getValueExpression($arg->value));
-			}
-			return sprintf('"%s->%s(%s)"', $this->getValueExpression($expr->var), $expr->name->name, implode(',', $args));
 		}
-		$this->debug($expr, 'unknown value expr type');
 	}
 
 	protected function debug($node, $message = '', $full = true, $stop = true)
 	{
 		if ($full) {
-			var_dump($node);
+			$dumpNode = clone $node;
+			$this->removeTagsForDump($dumpNode);
+			var_dump($dumpNode);
 		} else {
 			echo get_class($node) . ", depth: " . count($this->nodeStack) . "\n";
 		}
-		$from = $node->getAttribute('startLine');
-		$to = $node->getAttribute('endLine');
+		$from = $node->getStartLine();
+		$to = $node->getEndLine();
 		$lines = array_slice($this->currentLines, $from-1, $to-$from+1);
 		printf("file:\n%s\nline:%s-%s\ncode:%s\n",
 				$this->currentTarget, $from, $to,
 				implode("\n", $lines)
 				);
 		if ($stop) {
-			die($message . "\n");
+			//die($message . "\n");
+			throw new \Exception($message);
 		} else {
 			echo "$message\n\n";
 		}
+	}
+
+	protected function registerClass(Node\Stmt\Class_ $node)
+	{
+		if (isset($this->classStack[$node->name->name])) {
+			Warning::addWarning($this->currentTarget, $node->name->name, $node, 'duplicate class found');
+			// ignore
+			return;
+		}
+		$this->classStack[$node->name->name] = $node;
+	}
+
+	public function getAncestorName($className)
+	{
+		if (!isset($this->classStack[$className])) {
+			return null;
+		}
+		$classNode = $this->classStack[$className];
+		if (!$classNode->extends instanceof Node\Name) {
+			return null;
+		}
+		return implode('\\', $classNode->extends->parts);
 	}
 
 }

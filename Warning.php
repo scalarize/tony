@@ -3,6 +3,8 @@
 
 namespace TonyParser;
 
+use PhpParser\Node;
+
 class Warning
 {
 
@@ -11,11 +13,13 @@ class Warning
 	static $colors;
 
 	protected $file;
+	protected $lines;
+
 	protected $nodeName;
 	protected $nodeInfo;
 	protected $message;
 
-	public function __construct(string $fileName, string $nodeName, object $nodeInfo, string $message = '') {
+	public function __construct(string $fileName, string $nodeName, $nodeInfo, string $message = '') {
 		$this->file = $fileName;
 		$this->nodeName = $nodeName;
 		$this->nodeInfo = $nodeInfo;
@@ -30,17 +34,37 @@ class Warning
 	}
 
 	public function getShellExpr(bool $verboseMode = false) {
-		$ret = sprintf("%s: %s\n  node: %s\n  file: %s\n",
-				$this->getColoredString("WARNING", 'red'), $this->message,
+		$sourceInfo = $this->getSourceInfo();
+		$ret = sprintf("%s\n  node: %s\n  file: %s\n  line: %d-%d\n  code:  [%s] ...\n",
+				$this->getColoredString("WARNING: " . $this->message, 'red'),
 				$this->getColoredString($this->nodeName, 'cyan'),
-				$this->getColoredString($this->file, 'yellow'));
+				$this->getColoredString($this->file, 'yellow'),
+				$sourceInfo['from'], $sourceInfo['to'],
+				$this->getColoredString($sourceInfo['code'], 'cyan')
+			);
 		if ($verboseMode) {
 			$ret .= "  " . var_export($this->nodeInfo->getNode(), true) . "\n";
+		}
+		return $ret . "\n";
+	}
+
+	public function getSourceInfo()
+	{
+		$ret = ['from' => -1, 'to' => -1, 'code' => ''];
+		if ($this->nodeInfo instanceof Node) {
+			$ret['from'] = $this->nodeInfo->getAttribute('startLine');
+			$ret['to'] = $this->nodeInfo->getAttribute('endLine');
+			if (empty($this->lines)) {
+				$this->lines = explode("\n", file_get_contents($this->file));
+			}
+			if (!empty($this->lines) && count($this->lines) >= $ret['from']) {
+				$ret['code'] = trim($this->lines[$ret['from'] - 1]);
+			}
 		}
 		return $ret;
 	}
 
-	public static function addWarning(string $fileName, string $nodeName, object $nodeInfo, string $message = '') {
+	public static function addWarning(string $fileName, string $nodeName, $nodeInfo, string $message = '') {
 		self::$warnings []= new Warning($fileName, $nodeName, $nodeInfo, $message);
 	}
 

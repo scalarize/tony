@@ -43,7 +43,7 @@ $dbCalls = $finder->getDBCalls();
 echo "  found " . count($dbCalls) . " sql commands ... \n";
 
 foreach ($dbCalls as $dbCall) {
-	var_dump($dbCall);
+	print_r($dbCall);
 }
 
 echo "finding record classes ... \n";

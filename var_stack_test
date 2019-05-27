@@ -35,8 +35,12 @@ $visitor = new VarStackVisitor($target);
 $visitor->traverse();
 foreach ($visitor->getVarStacks() as $target => $vars) {
 	echo "=== $target ===\n";
-	foreach ($vars as $name => $val) {
-		echo "  $name => " . get_class($val) . "\n";
+	foreach ($vars as $name => $vals) {
+		echo "  $name => [\n";
+		foreach ($vals as $val) {
+			echo "    " . $val->getType() . "\n";
+		}
+		echo "  ];\n";
 	}
 }
 
