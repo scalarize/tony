@@ -1,4 +1,8 @@
-composer reuqire nikic/php-parser
+wget https://getcomposer.org/installer
+
+
+
+composer require nikic/php-parser
 composer require greenlion/php-sql-parser
 
 // TODO, check md5

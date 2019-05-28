@@ -388,13 +388,22 @@ class DBCallFinder extends VarStackVisitor
 	public function buildSQLSampleFromFunction_implode($args)
 	{
 		if (count($args) != 2) return null;
+		// TODO, getter and array finding should be common
 		$delim = $this->buildSQLSampleFromVariable($args[0]->value);
 		$arr = $args[1]->value;
-		if (!is_array($arr)) {
-			// TODO, when would $arr be array?
-			return sprintf('FUNCTION_CALL::implode(%s)', $this->buildSQLSampleFromVariable($arr));
+		$toImplode = [];
+		if ($arr instanceof Node\Expr\FuncCall) {
+			$arr = $this->buildSQLSampleFromVariable($arr);
+			if (is_array($arr)) {
+				return implode($delim, $arr);
+			}
+		} elseif ($arr instanceof Node\Expr\Array_) {
+			foreach ($arr->items as $item) {
+				$toImplode []= $this->buildSQLSampleFromVariable($item->value);
+			}
+			return implode($delim, $toImplode);
 		}
-		return implode($delim, $arr);
+		return null;
 	}
 
 	public function buildSQLSampleFromFunction_date($args)
@@ -403,6 +412,39 @@ class DBCallFinder extends VarStackVisitor
 		$format = $this->buildSQLSampleFromVariable($args[0]->value);
 		// who cares the exact value...
 		return date($format, time());
+	}
+
+	public function buildSQLSampleFromFunction_array_keys($args)
+	{
+		$arg = $args[0]->value;
+		$varName = $this->getVarIdentifier($arg);
+		$var = $this->getVar($varName, $arg->getStartLine());
+		if ($var == null) {
+			$var = $this->getGlobalVar($varName, $this->getNodeClosure($arg));
+		}
+		if ($var == null && $arg instanceof Node\Expr\PropertyFetch && $arg->var->name = 'this') {
+			// check if there is a getter
+			$getter = 'get' . strtolower($arg->name->name);
+			foreach ($this->currentClass->stmts as $stmt) {
+				if ($stmt instanceof Node\Stmt\ClassMethod && strtolower($stmt->name->name) == $getter) {
+					foreach ($stmt->stmts as $st) {
+						// TODO, only first return here
+						if ($st instanceof Node\Stmt\Return_ && $st->expr instanceof Node\Expr\Array_) {
+							$var = $st->expr;
+							break 2;
+						}
+					}
+				}
+			}
+		}
+		if ($var instanceof Node\Expr\Array_) {
+			$ret = [];
+			foreach ($var->items as $item) {
+				$ret []= $this->buildSQLSampleFromVariable($item->key);
+			}
+			return $ret;
+		}
+		return null;
 	}
 
 	protected function getSQLPrintfFormat($format)
