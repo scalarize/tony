@@ -108,7 +108,7 @@ class DBCallFinder extends VarStackVisitor
 
 				$paramIndex = -1;
 				for ($i = 0, $cnt = count($method->params); $i < $cnt; ++$i) {
-					if ($method->params[$i] == $var) {
+					if ($method->params[$i] === $var) {
 						$paramIndex = $i;
 						break;
 					}
@@ -262,7 +262,7 @@ class DBCallFinder extends VarStackVisitor
 
 						$paramIndex = -1;
 						for ($i = 0, $cnt = count($method->params); $i < $cnt; ++$i) {
-							if ($method->params[$i] == $referredVar) {
+							if ($method->params[$i] === $referredVar) {
 								$paramIndex = $i;
 								break;
 							}
