@@ -27,7 +27,8 @@ class MethodCallFinder extends VarStackVisitor
 		parent::enterNode($node);
 
 		if ($this->static) {
-			if ($node instanceof Node\Expr\StaticCall && $this->methodNameLower == strtolower($node->name->name)) {
+			// TODO, if method name is not a direct name?
+			if ($node instanceof Node\Expr\StaticCall && isset($node->name->name) && $this->methodNameLower == strtolower($node->name->name)) {
 				$this->methodCalls []= $node;
 			}
 		} else {
