@@ -82,7 +82,7 @@ class VarStackVisitor extends NodeVisitorAbstract
 			$this->state = self::METHOD_INSIDE;
 			// method params are local vars
 			foreach ($node->params as $param) {
-				$this->registerVar($param->var, $param, null, 'foreach');
+				$this->registerVar($param->var, $param);
 			}
 		} elseif ($node instanceof Node\Expr\Assign) {
 			if ($node->var instanceof Node\Expr\List_) {
@@ -110,16 +110,16 @@ class VarStackVisitor extends NodeVisitorAbstract
 					// $this->debug($node->expr, 'cannot find foreach array for name: ' . $arrName);
 					return;
 				}
-				$this->registerForeachVars($node, $arr);
+				$this->registerForeachVars($node, $arr, null, 'foreach');
 				break;
 			case 'Expr_Array':
-				$this->registerForeachVars($node, $node->expr);
+				$this->registerForeachVars($node, $node->expr, null, 'foreach');
 				break;
 			case 'Expr_FuncCall':
 			case 'Expr_StaticCall':
 			case 'Expr_MethodCall':
 				// FIXME, 暂时没办法拆解, 只好先原样注册
-				$this->registerForeachVars($node, $node->expr);
+				$this->registerForeachVars($node, $node->expr, null, 'foreach');
 				break;
 			default:
 				$this->debug($node->expr, 'unknown foreach array var type: ' . $node->expr->getType());
@@ -180,7 +180,7 @@ class VarStackVisitor extends NodeVisitorAbstract
 	protected function getVar($varName, $beforeLineNumber)
 	{
 		foreach (['foreach', 'method', 'class', 'global'] as $domain) {
-			if (!isset($this->vars[$domain][$varName])) return null;
+			if (!isset($this->vars[$domain][$varName])) continue;
 			for ($i = count($this->vars[$domain][$varName]) - 1; $i >= 0; $i--) {
 				$var = $this->vars[$domain][$varName][$i];
 				// TODO, ensure '<=' versus '<'
@@ -336,6 +336,18 @@ class VarStackVisitor extends NodeVisitorAbstract
 			return null;
 		}
 		return implode('\\', $classNode->extends->parts);
+	}
+
+	public function dumpVars()
+	{
+		echo "====== DUMPING VARS {{{ ======\n";
+		foreach ($this->vars as $domain => $vars) {
+			echo "=== $domain ===\n";
+			foreach ($vars as $name => $vararr) {
+				echo "  $name => " . $vararr[count($vararr) - 1]->getType() . "\n";
+			}
+		}
+		echo "====== }}} ======\n";
 	}
 
 }
