@@ -397,6 +397,14 @@ class DBCallFinder extends VarStackVisitor
 		return implode($delim, $arr);
 	}
 
+	public function buildSQLSampleFromFunction_date($args)
+	{
+		if (count($args) != 2) return null;
+		$format = $this->buildSQLSampleFromVariable($args[0]->value);
+		// who cares the exact value...
+		return date($format, time());
+	}
+
 	protected function getSQLPrintfFormat($format)
 	{
 		if ($format instanceof Node\Scalar\String_) {
