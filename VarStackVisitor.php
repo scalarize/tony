@@ -50,17 +50,20 @@ class VarStackVisitor extends NodeVisitorAbstract
 	{
 		$node = array_pop($this->nodeStack);
 		if ($node instanceof Node\Stmt\Class_) {
-			if ($this->vars['class']) {
+			if (!empty($this->vars['class'])) {
 				$this->varStacks[$this->currentClass->name->name] = $this->vars['class'];
 				$this->vars['class'] = []; 
 			}
 			$this->currentClass = null;
 		} elseif ($node instanceof Node\Stmt\ClassMethod) {
-			if ($this->vars['method']) {
+			if (!empty($this->vars['method'])) {
 				$this->varStacks[$this->currentClass->name->name . '::' . $this->currentMethod->name->name] = $this->vars['method'];
 				$this->vars['method'] = []; 
 			}
 			$this->currentMethod = null;
+		} elseif ($node instanceof Node\Stmt\Foreach_) {
+			// remove vars introduced by foreach statement
+			$this->vars['foreach'] = [];
 		}
 	}
 
@@ -79,7 +82,7 @@ class VarStackVisitor extends NodeVisitorAbstract
 			$this->state = self::METHOD_INSIDE;
 			// method params are local vars
 			foreach ($node->params as $param) {
-				$this->registerVar($param->var, $param);
+				$this->registerVar($param->var, $param, null, 'foreach');
 			}
 		} elseif ($node instanceof Node\Expr\Assign) {
 			if ($node->var instanceof Node\Expr\List_) {
@@ -95,7 +98,6 @@ class VarStackVisitor extends NodeVisitorAbstract
 				$this->registerVar($node->var, $node->expr);
 			}
 		} elseif ($node instanceof Node\Stmt\Foreach_) {
-			// TODO, remove these vars after leaveNode
 			switch ($node->expr->getType()) {
 			case 'Expr_Variable':
 			case 'Expr_PropertyFetch':
@@ -147,21 +149,21 @@ class VarStackVisitor extends NodeVisitorAbstract
 		}
 	}
 
-	protected function registerVar($var, $expr, $tag = null)
+	protected function registerVar($var, $expr, $tag = null, $domain = null)
 	{
 		$varName = $this->getVarIdentifier($var);
 		if ($varName) {
 			$prefix = '';
 			switch ($this->state) {
 			case self::CLASS_INSIDE:
-				$domain = 'class';
+				if (!$domain) $domain = 'class';
 				$prefix = $this->currentClass->name->name . '::';
 				break;
 			case self::METHOD_INSIDE:
-				$domain = 'method';
+				if (!$domain) $domain = 'method';
 				break;
 			default:
-				$domain = 'global';
+				if (!$domain) $domain = 'global';
 				break;
 			}
 			$varName = $prefix . $varName;
@@ -177,7 +179,7 @@ class VarStackVisitor extends NodeVisitorAbstract
 
 	protected function getVar($varName, $beforeLineNumber)
 	{
-		foreach (['method', 'class', 'global'] as $domain) {
+		foreach (['foreach', 'method', 'class', 'global'] as $domain) {
 			if (!isset($this->vars[$domain][$varName])) return null;
 			for ($i = count($this->vars[$domain][$varName]) - 1; $i >= 0; $i--) {
 				$var = $this->vars[$domain][$varName][$i];
@@ -200,7 +202,10 @@ class VarStackVisitor extends NodeVisitorAbstract
 
 	public function afterTraverse(array $nodes)
 	{
-		$this->varStacks[$this->currentTarget] = $this->vars;
+		if (!empty($this->vars['global'])) {
+			$this->varStacks[$this->currentTarget] = $this->vars['global'];
+			$this->vars = [];
+		}
 		$this->state = self::NOT_STARTED;
 	}
 
