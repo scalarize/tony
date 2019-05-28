@@ -31,10 +31,8 @@ class RecordClassFinder
 				if ($item === '..') continue;
 				$currentTarget = $target . '/' . $item;
 				foreach ($this->findExtendingClass($currentTarget) as $name => $classInfo) {
-					if (isset($ret[$name])) {
-						Warning::addWarning($currentTarget, $name, $classInfo, 'duplicate class found');
-						continue;
-					}
+					// class duplication warning is done by VarStackVisitor
+					if (isset($ret[$name])) continue;
 					$ret[$name] = $classInfo;
 				}
 			}

@@ -17,23 +17,16 @@ use TonyParser\{RecordClassFinder, ClassInfo, Warning, DBCallFinder};
 
 function usage() {
 	global $argv;
-	echo "Usage: php $argv[0] <file_to_parse> [verbose] [debug]\n";
+	echo "Usage: php $argv[0] -t <target_file_or_dir> -m [mode]\n";
 }
 
-$target = $argv[1];
+$args = getopt('t:m:');
+$target = $args['t'];
+$mode = empty($args['m']) ? 'plain' : $args['m'];
+
 if (empty($target)) {
 	usage();
 	exit;
-}
-
-$verbose = false;
-if (count($argv) >= 3 && $argv[2]) {
-	$verbose = true;
-}
-
-$debug = false;
-if (count($argv) >= 4 && $argv[3]) {
-	$debug = true;
 }
 
 echo "finding sql commands ... \n";
@@ -57,13 +50,13 @@ foreach ($recordClasses as $name => $classInfo) {
 	$dbNames = $classInfo->getYiiDBNames();
 	if (empty($dbNames)) {
 		if (empty($classInfo->getChildren())) {
-			Warning::addWarning($classInfo->getFileName(), $name, $classInfo, 'cannot find dbName for non-inherited record class');
+			Warning::addWarning($classInfo->getFileName(), $name, $classInfo, 'cannot find dbName for non-inherited record class: ' . $classInfo->getClassName());
 		}
 	}
 	$tableNames = $classInfo->getYiiTableNames();
 	if (empty($tableNames)) {
 		if (empty($classInfo->getChildren())) {
-			Warning::addWarning($classInfo->getFileName(), $name, $classInfo, 'cannot find tableName for non-inherited record class');
+			Warning::addWarning($classInfo->getFileName(), $name, $classInfo, 'cannot find tableName for non-inherited record class: ' . $classInfo->getClassName());
 		}
 	} else {
 		foreach ($dbNames as $dbName) {
@@ -78,20 +71,15 @@ foreach ($recordClasses as $name => $classInfo) {
 			$tables[$possibleTableName] []= $classInfo;
 		}
 	}
-	if ($verbose) {
-		$info = sprintf("=== %s ===\n  file: %s\n  hierarchy: -> %s\n  table(s): %s\n",
-					$name, $classInfo->getFileName(), implode(' -> ', $classInfo->getAncestorNames()), implode(', ', $possibleTableNames));
-		echo $info;
-	}
+	$info = sprintf("=== %s ===\n  file: %s\n  hierarchy: -> %s\n  table(s): %s\n",
+				$name, $classInfo->getFileName(), implode(' -> ', $classInfo->getAncestorNames()), implode(', ', $possibleTableNames));
+	echo $info;
 }
 
 foreach ($tables as $name => $classInfos) {
 	$classNames = [];
 	foreach ($classInfos as $classInfo) {
 		$classNames []= $classInfo->getClassName();
-		if ($debug) {
-			var_dump($classInfo);
-		}
 	}
 	$info = sprintf("=== %s ===\n  classes: %s\n",
 		$name, implode(',', $classNames));
@@ -99,6 +87,6 @@ foreach ($tables as $name => $classInfos) {
 }
 
 foreach (Warning::getWarnings() as $warn) {
-	echo $warn->getShellExpr($debug);
+	echo $warn->getExpr($mode);
 }
 

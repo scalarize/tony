@@ -33,7 +33,8 @@ class Warning
 		return self::$colors->getColoredString($message, $foreColor, $bgColor);
 	}
 
-	public function getShellExpr(bool $verboseMode = false) {
+	public function getShellExpr(bool $verboseMode = false)
+	{
 		$sourceInfo = $this->getSourceInfo();
 		$ret = sprintf("%s\n  node: %s\n  file: %s\n  line: %d-%d\n  code:  [%s] ...\n",
 				$this->getColoredString("WARNING: " . $this->message, 'red'),
@@ -46,6 +47,35 @@ class Warning
 			$ret .= "  " . var_export($this->nodeInfo->getNode(), true) . "\n";
 		}
 		return $ret . "\n";
+	}
+
+	public function getPlainExpr(bool $verboseMode = false) {
+		$sourceInfo = $this->getSourceInfo();
+		$ret = sprintf("WARNING: %s\n  node: %s\n  file: %s\n  line: %d-%d\n  code:  [%s] ...\n",
+				$this->message,
+				$this->nodeName,
+				$this->file,
+				$sourceInfo['from'], $sourceInfo['to'],
+				$sourceInfo['code']
+			);
+		if ($verboseMode) {
+			$ret .= "  " . var_export($this->nodeInfo->getNode(), true) . "\n";
+		}
+		return $ret . "\n";
+	}
+
+	public function getExpr($mode = 'plain', $verboseMode = false)
+	{
+		switch ($mode) {
+		case 'txt':
+		case 'text':
+		case 'plain':
+			return $this->getPlainExpr($verboseMode);
+		case 'shell':
+		default:
+			return $this->getShellExpr($verboseMode);
+		}
+		
 	}
 
 	public function getSourceInfo()

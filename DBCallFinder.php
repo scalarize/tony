@@ -6,6 +6,7 @@ namespace TonyParser;
 require 'vendor/autoload.php';
 
 require 'VarStackVisitor.php';
+require 'MethodCallFinder.php';
 
 use PhpParser\{Node, NodeVisitorAbstract, NodeTraverser};
 use PhpParser\{Parser, ParserFactory};
@@ -87,42 +88,74 @@ class DBCallFinder extends VarStackVisitor
 		$varName = $this->getVarIdentifier($sql);
 		$var = $this->getVar($varName, $node->getStartLine());
 		if (null == $var) {
+			// make cause bug here, check in the future, FIXME
+			// for example, later var assignment?
+			if ($this->getNodeClosure($sql) == null) {
+				$this->debug($sql);die();
+			}
+			$var = $this->getGlobalVar($varName, $this->getNodeClosure($sql));
+		}
+		if (null == $var) {
 			Warning::addWarning($this->currentTarget, $varName, $sql, 'var not found for sql: ' . $varName);
 			return;
 		}
 
 		if ($var instanceof Node\Param) {
-			Warning::addWarning($this->currentTarget, $varName, $sql, 'sql is a method param, potential injection');
-			return;
+			// TODO, redundant codes
+			$method = $var->getAttribute('parent');
+			$class = $method->getAttribute('parent');
+			if ($method->flags & Node\Stmt\Class_::MODIFIER_PRIVATE) {
+
+				$paramIndex = -1;
+				for ($i = 0, $cnt = count($method->params); $i < $cnt; ++$i) {
+					if ($method->params[$i] == $var) {
+						$paramIndex = $i;
+						break;
+					}
+				}
+				if ($paramIndex < 0) {
+					$this->debug($node, 'bad param index found: ' . $paramIndex);
+				}
+				foreach ((new MethodCallFinder($this->currentTarget, $method))->getMethodCalls() as $call) {
+					$sqlParam = $call->args[$paramIndex]->value;
+					$this->checkSQL($call, $dbName, $sqlParam);
+				}
+				
+				return;
+			} else { //if ($method->flags & Node\Stmt\Class_::MODIFIER_PROTECTED || $method->flags & Node\Stmt\Class_::MODIFIER_PUBLIC) {
+				Warning::addWarning($this->currentTarget, $varName, $sql,
+						sprintf('POTENTIAL INJECTION, sql is a public/protected method param: %s::%s', $class->name->name, $method->name));
+				return;
+			}
 		}
 
 		$sqlSample = $this->buildSQLSampleFromVariable($var);
-		if (strpos($sqlSample, 'METHOD_CALL::') !== false) {
-			Warning::addWarning($this->currentTarget, $sqlSample, $var, 'potential injection. sql contains method call return value as string');
+		if (strpos($sqlSample, 'METHOD_PARAM::') !== false) {
+			Warning::addWarning($this->currentTarget, $sqlSample, $var, 'POTENTIAL INJECTION. sql using method param as string');
 			return;
 		}
-		if (strpos($sqlSample, 'METHOD_PARAM::') !== false) {
-			Warning::addWarning($this->currentTarget, $sqlSample, $var, 'potential injection. sql using method param as string');
+		if (strpos($sqlSample, 'METHOD_CALL::') !== false) {
+			Warning::addWarning($this->currentTarget, $sqlSample, $var, 'POTENTIAL INJECTION. sql contains method call return value as string');
 			return;
 		}
 		if (strpos($sqlSample, 'OBJECT_PROPERTY::') !== false) {
-			Warning::addWarning($this->currentTarget, $sqlSample, $var, 'potential injection. sql using object property as string');
+			Warning::addWarning($this->currentTarget, $sqlSample, $var, 'POTENTIAL INJECTION. sql using object property as string');
 			return;
 		}
 		if (strpos($sqlSample, 'FUNCTION_CALL::') !== false) {
-			Warning::addWarning($this->currentTarget, $sqlSample, $var, 'potential injection. sql using function call as string');
+			Warning::addWarning($this->currentTarget, $sqlSample, $var, 'POTENTIAL INJECTION. sql using function call as string');
 			return;
 		}
 		if (strpos($sqlSample, 'ARRAY_FETCH::') !== false) {
-			Warning::addWarning($this->currentTarget, $sqlSample, $var, 'potential injection. sql contains array dim fetch value as string');
+			Warning::addWarning($this->currentTarget, $sqlSample, $var, 'POTENTIAL INJECTION. sql contains array dim fetch value as string');
 			return;
 		}
 		if (strpos($sqlSample, 'ARRAY::') !== false) {
-			Warning::addWarning($this->currentTarget, $sqlSample, $var, 'potential injection. sql contains array dim fetch value as string');
+			Warning::addWarning($this->currentTarget, $sqlSample, $var, 'POTENTIAL INJECTION. sql contains array dim fetch value as string');
 			return;
 		}
 		if (strpos($sqlSample, 'CONST::') !== false) {
-			Warning::addWarning($this->currentTarget, $sqlSample, $var, 'potential injection. sql contains const value as string');
+			Warning::addWarning($this->currentTarget, $sqlSample, $var, 'POTENTIAL INJECTION. sql contains const value as string');
 			return;
 		}
 
@@ -182,8 +215,12 @@ class DBCallFinder extends VarStackVisitor
 			 * 
 			 */
 			$func = 'buildSQLSampleFromFunction_' . $expr->name->parts[0];
+			$ret = null;
 			if (method_exists($this, $func)) {
-				return $this->$func($expr->args);
+				$ret = $this->$func($expr->args);
+			}
+			if (null != $ret) {
+				return $ret;
 			} else {
 				return 'FUNCTION_CALL::' . $expr->name->parts[0] . '::';
 			}
@@ -216,6 +253,31 @@ class DBCallFinder extends VarStackVisitor
 
 			} elseif (($referredVar = $this->getVar($varName, $expr->getStartLine())) !== null) {
 				if ($referredVar instanceof Node\Param) {
+					// TODO, redundant codes
+					// try to find calling context if param invoked by private methods
+					// not sure this works ... ToT
+					$method = $referredVar->getAttribute('parent');
+					$class = $method->getAttribute('parent');
+					if ($method->flags & Node\Stmt\Class_::MODIFIER_PRIVATE) {
+
+						$paramIndex = -1;
+						for ($i = 0, $cnt = count($method->params); $i < $cnt; ++$i) {
+							if ($method->params[$i] == $referredVar) {
+								$paramIndex = $i;
+								break;
+							}
+						}
+						if ($paramIndex < 0) {
+							$this->debug($referredVar, 'bad param index found: ' . $paramIndex);
+						}
+						foreach ((new MethodCallFinder($this->currentTarget, $method))->getMethodCalls() as $call) {
+							$theParam = $call->args[$paramIndex]->value;
+							$paramVar = $this->getGlobalVar($this->getVarIdentifier($theParam), $this->getNodeClosure($theParam));
+							if (null != $paramVar) {
+								return $this->buildSQLSampleFromVariable($paramVar);
+							}
+						}
+					}
 					return 'METHOD_PARAM::$' . $varName . '::';
 				} else {
 					$tag = $referredVar->getAttribute('tag');
@@ -271,7 +333,7 @@ class DBCallFinder extends VarStackVisitor
 			return sprintf('METHOD_CALL::%s->%s()::', $expr->var->name, $expr->name->name);
 
 		}
-		$this->debug($expr, 'unknown value expr type');
+		$this->debug($expr, 'unknown value expr type: ' . $expr->getType());
 	}
 
 	protected function getTablesFromParsedSQL($parsed)
@@ -323,6 +385,18 @@ class DBCallFinder extends VarStackVisitor
 		return $ret;
 	}
 
+	public function buildSQLSampleFromFunction_implode($args)
+	{
+		if (count($args) != 2) return null;
+		$delim = $this->buildSQLSampleFromVariable($args[0]->value);
+		$arr = $args[1]->value;
+		if (!is_array($arr)) {
+			// TODO, when would $arr be array?
+			return sprintf('FUNCTION_CALL::implode(%s)', $this->buildSQLSampleFromVariable($arr));
+		}
+		return implode($delim, $arr);
+	}
+
 	protected function getSQLPrintfFormat($format)
 	{
 		if ($format instanceof Node\Scalar\String_) {
@@ -337,6 +411,11 @@ class DBCallFinder extends VarStackVisitor
 	protected function registerDBCalls($keyword, $dbName, $tableName, $sqlSample)
 	{
 		$this->dbCalls []= [$keyword, $dbName, $tableName, $sqlSample];
+	}
+
+	public function getVarStacks()
+	{
+		return $this->varStacks;
 	}
 
 }

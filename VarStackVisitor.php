@@ -21,9 +21,16 @@ class VarStackVisitor extends NodeVisitorAbstract
 	protected $vars;
 	protected $currentTarget;
 	protected $currentLines;
+
+	// to track node relationship
 	protected $nodeStack = [];
+
+	// to decide where we are
 	protected $state = null;
+
+	// store all vars
 	protected $varStacks = [];
+
 	protected $currentClass;
 	protected $currentMethod;
 	protected $classStack;
@@ -49,17 +56,20 @@ class VarStackVisitor extends NodeVisitorAbstract
 	public function leaveNode(Node $node)
 	{
 		$node = array_pop($this->nodeStack);
+		$closure = $this->getCurrentClosure();
 		if ($node instanceof Node\Stmt\Class_) {
 			if (!empty($this->vars['class'])) {
-				$this->varStacks[$this->currentClass->name->name] = $this->vars['class'];
+				$this->varStacks[$closure] = $this->vars['class'];
 				$this->vars['class'] = []; 
 			}
+			$this->state = self::GLOBAL_SCOPE;
 			$this->currentClass = null;
 		} elseif ($node instanceof Node\Stmt\ClassMethod) {
 			if (!empty($this->vars['method'])) {
-				$this->varStacks[$this->currentClass->name->name . '::' . $this->currentMethod->name->name] = $this->vars['method'];
+				$this->varStacks[$closure] = $this->vars['method'];
 				$this->vars['method'] = []; 
 			}
+			$this->state = self::CLASS_INSIDE;
 			$this->currentMethod = null;
 		} elseif ($node instanceof Node\Stmt\Foreach_) {
 			// remove vars introduced by foreach statement
@@ -108,7 +118,7 @@ class VarStackVisitor extends NodeVisitorAbstract
 				if (null == $arr) {
 					// FIXME, ignore
 					// $this->debug($node->expr, 'cannot find foreach array for name: ' . $arrName);
-					return;
+					break;
 				}
 				$this->registerForeachVars($node, $arr, null, 'foreach');
 				break;
@@ -130,7 +140,21 @@ class VarStackVisitor extends NodeVisitorAbstract
 				$this->registerVar($const, $const->value);
 			}
 		}
+
+		$node->setAttribute('closure', $this->getCurrentClosure());
 		return null;
+	}
+
+	protected function getCurrentClosure()
+	{
+		switch ($this->state) {
+		case self::CLASS_INSIDE:
+			return $this->currentClass->name->name;
+		case self::METHOD_INSIDE:
+			return $this->currentClass->name->name . '::' . $this->currentMethod->name->name;
+		default:
+			return '';
+		}
 	}
 
 	protected function registerForeachVars($node, $arr)
@@ -179,6 +203,7 @@ class VarStackVisitor extends NodeVisitorAbstract
 
 	protected function getVar($varName, $beforeLineNumber)
 	{
+		// find in current vars
 		foreach (['foreach', 'method', 'class', 'global'] as $domain) {
 			if (!isset($this->vars[$domain][$varName])) continue;
 			for ($i = count($this->vars[$domain][$varName]) - 1; $i >= 0; $i--) {
@@ -288,6 +313,12 @@ class VarStackVisitor extends NodeVisitorAbstract
 		foreach ($node as $key => $val) {
 			if ($val instanceof Node) {
 				$this->removeTagsForDump($val);
+			} elseif (is_array($val)) {
+				foreach ($val as $subval) {
+					if ($subval instanceof Node) {
+						$this->removeTagsForDump($subval);
+					}
+				}
 			}
 		}
 	}
@@ -319,7 +350,7 @@ class VarStackVisitor extends NodeVisitorAbstract
 	protected function registerClass(Node\Stmt\Class_ $node)
 	{
 		if (isset($this->classStack[$node->name->name])) {
-			Warning::addWarning($this->currentTarget, $node->name->name, $node, 'duplicate class found');
+			Warning::addWarning($this->currentTarget, $node->name->name, $node, 'duplicate class found: ' . $node->name->name);
 			// ignore
 			return;
 		}
@@ -348,6 +379,12 @@ class VarStackVisitor extends NodeVisitorAbstract
 			}
 		}
 		echo "====== }}} ======\n";
+	}
+
+	public function getNodeClosure(Node $node)
+	{
+		// TODO, ensure 'closure' attribute has no conflict with other usages
+		return $node->getAttribute('closure');
 	}
 
 }
