@@ -199,11 +199,11 @@ class DBCallFinder extends VarStackVisitor
 			return sprintf('ARRAY_FETCH::%s[%s]', $varName, $dimName);
 
 		} elseif ($expr instanceof Node\Expr\Array_) {
-			$args = [];
-			foreach ($expr->args as $arg) {
-				$args []= $this->buildSQLSampleFromVariable($arg->value);
+			$items = [];
+			foreach ($expr->items as $item) {
+				$items []= $this->buildSQLSampleFromVariable($item->value);
 			}
-			return sprintf('ARRAY::[%s]', implode(',', $args));
+			return sprintf('ARRAY::[%s]', implode(',', $items));
 
 		} elseif ($expr instanceof Node\Expr\PropertyFetch
 					|| $expr instanceof Node\Expr\Variable) {
