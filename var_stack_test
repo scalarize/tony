@@ -12,28 +12,19 @@ use TonyParser\{VarStackVisitor};
 
 function usage() {
 	global $argv;
-	echo "Usage: php $argv[0] <file_to_parse> [verbose] [debug]\n";
+	echo "Usage: php $argv[0] -t <target_file_or_dir_to_parse> -s [section_to_show]\n";
 }
 
-$target = $argv[1];
-if (empty($target)) {
+$args = getopt('t:s:v');
+if (empty($args['t'])) {
 	usage();
 	exit;
 }
 
-$verbose = false;
-if (count($argv) >= 3 && $argv[2]) {
-	$verbose = true;
-}
-
-$debug = false;
-if (count($argv) >= 4 && $argv[3]) {
-	$debug = true;
-}
-
-$visitor = new VarStackVisitor($target);
+$visitor = new VarStackVisitor($args['t']);
 $visitor->traverse();
 foreach ($visitor->getVarStacks() as $target => $vars) {
+	if ($args['s'] && $target != $args['s']) continue;
 	echo "=== $target ===\n";
 	foreach ($vars as $name => $vals) {
 		echo "  $name => [\n";
