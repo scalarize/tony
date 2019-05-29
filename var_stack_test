@@ -23,15 +23,26 @@ if (empty($args['t'])) {
 
 $visitor = new VarStackVisitor($args['t']);
 $visitor->traverse();
-foreach ($visitor->getVarStacks() as $target => $vars) {
-	if ($args['s'] && $target != $args['s']) continue;
-	echo "=== $target ===\n";
+foreach ($visitor->getVarStacks() as $section => $vars) {
+	if (isset($args['s']) && $section != $args['s']) continue;
+	echo "=== $section ===\n";
 	foreach ($vars as $name => $vals) {
+		if (count($vals) == 1) {
+			printf("  %s => %s (at line: %d)\n", $name, __expr($vals[0]), $vals[0]->getStartLine());
+			continue;
+		}
 		echo "  $name => [\n";
 		foreach ($vals as $val) {
-			echo "    " . $val->getType() . "\n";
+			printf("    %s (at line: %d)\n", __expr($val), $val->getStartLine());
 		}
 		echo "  ];\n";
 	}
 }
 
+function __expr($val)
+{
+	if ($val instanceof Node\Scalar && !$val instanceof Node\Scalar\Encapsed) {
+		return $val->value;
+	}
+	return $val->getType();
+}

@@ -1,5 +1,5 @@
 <?php declare(strict_types=1);
-/** vim: set noet ts=4 sw=4 fdm=indent: */
+/** vim: set number noet ts=4 sw=4 fdm=indent: */
 
 namespace TonyParser;
 
@@ -28,7 +28,7 @@ class VarStackVisitor extends NodeVisitorAbstract
 	// to decide where we are
 	protected $state = null;
 
-	// store all vars
+	// store all variables
 	protected $varStacks = [];
 
 	protected $currentClass;
@@ -45,6 +45,7 @@ class VarStackVisitor extends NodeVisitorAbstract
 		$this->classStack = [];
 	}
 
+	/** @override */
 	public function beforeTraverse(array $nodes)
 	{
 		$this->vars = [];
@@ -53,6 +54,29 @@ class VarStackVisitor extends NodeVisitorAbstract
 		$this->varStacks[$this->currentTarget] = [];
 	}
 
+	/** @override */
+	public function enterNode(Node $node)
+	{
+		// FIXME, this may be unneccessary and could be opt out
+		$node->setAttribute('file', $this->currentTarget);
+		$node->setAttribute('closure', $this->getCurrentClosure());
+        if (!empty($this->nodeStack)) {
+            $node->setAttribute('parent', $this->nodeStack[count($this->nodeStack)-1]);
+        }
+		$this->nodeStack []= $node;
+		if ($node instanceof Node\Stmt\Class_) {
+			$this->currentClass = $node;
+			$this->state = self::CLASS_INSIDE;
+			$this->registerClass($node);
+		} elseif ($node instanceof Node\Stmt\ClassMethod) {
+			$this->currentMethod = $node;
+			$this->state = self::METHOD_INSIDE;
+		}
+
+		return null;
+	}
+
+	/** @override */
 	public function leaveNode(Node $node)
 	{
 		$node = array_pop($this->nodeStack);
@@ -65,35 +89,18 @@ class VarStackVisitor extends NodeVisitorAbstract
 			$this->state = self::GLOBAL_SCOPE;
 			$this->currentClass = null;
 		} elseif ($node instanceof Node\Stmt\ClassMethod) {
+
+			// method params are local vars
+			foreach ($node->params as $param) {
+				$this->registerVar($param->var, $param);
+			}
+
 			if (!empty($this->vars['method'])) {
 				$this->varStacks[$closure] = $this->vars['method'];
 				$this->vars['method'] = []; 
 			}
 			$this->state = self::CLASS_INSIDE;
 			$this->currentMethod = null;
-		} elseif ($node instanceof Node\Stmt\Foreach_) {
-			// remove vars introduced by foreach statement
-			$this->vars['foreach'] = [];
-		}
-	}
-
-	public function enterNode(Node $node)
-	{
-        if (!empty($this->nodeStack)) {
-            $node->setAttribute('parent', $this->nodeStack[count($this->nodeStack)-1]);
-        }
-		$this->nodeStack []= $node;
-		if ($node instanceof Node\Stmt\Class_) {
-			$this->currentClass = $node;
-			$this->state = self::CLASS_INSIDE;
-			$this->registerClass($node);
-		} elseif ($node instanceof Node\Stmt\ClassMethod) {
-			$this->currentMethod = $node;
-			$this->state = self::METHOD_INSIDE;
-			// method params are local vars
-			foreach ($node->params as $param) {
-				$this->registerVar($param->var, $param);
-			}
 		} elseif ($node instanceof Node\Expr\Assign) {
 			if ($node->var instanceof Node\Expr\List_) {
 				// list($vars) = ...
@@ -113,8 +120,7 @@ class VarStackVisitor extends NodeVisitorAbstract
 			case 'Expr_PropertyFetch':
 			case 'Expr_StaticPropertyFetch':
 			case 'Expr_ArrayDimFetch':
-				$arrName = $this->getVarIdentifier($node->expr);
-				$arr = $this->getVar($arrName, $node->getStartLine());
+				$arr = $this->getVariableExpr($node->expr);
 				if (null == $arr) {
 					// FIXME, ignore
 					// $this->debug($node->expr, 'cannot find foreach array for name: ' . $arrName);
@@ -135,14 +141,16 @@ class VarStackVisitor extends NodeVisitorAbstract
 				$this->debug($node->expr, 'unknown foreach array var type: ' . $node->expr->getType());
 				break;
 			}
+			
+			if (!empty($this->vars['foreach'])) {
+				$this->varStacks[$closure . '::FOREACH_' . $node->getStartLine()] = $this->vars['foreach'];
+				$this->vars['foreach'] = []; 
+			}
 		} elseif ($node instanceof Node\Stmt\ClassConst) {
 			foreach ($node->consts as $const) {
 				$this->registerVar($const, $const->value);
 			}
 		}
-
-		$node->setAttribute('closure', $this->getCurrentClosure());
-		return null;
 	}
 
 	protected function getCurrentClosure()
@@ -160,10 +168,12 @@ class VarStackVisitor extends NodeVisitorAbstract
 	protected function registerForeachVars($node, $arr)
 	{
 		if ($arr instanceof Node\Expr\Array_ && count($arr->items) > 0) {
-			if ($node->keyVar !== null) {
-				$this->registerVar($node->keyVar, $arr->items[0]->key);
+			foreach ($arr->items as $item) {
+				if ($node->keyVar !== null) {
+					$this->registerVar($node->keyVar, $item->key);
+				}
+				$this->registerVar($node->valueVar, $item->value);
 			}
-			$this->registerVar($node->valueVar, $arr->items[0]->value);
 		} else {
 			// FIXME, 临时方案, 把整个数组作为 var 对象, 先用一下
 			if ($node->keyVar !== null) {
@@ -201,28 +211,23 @@ class VarStackVisitor extends NodeVisitorAbstract
 		}
 	}
 
-	protected function getVar($varName, $beforeLineNumber)
+	protected function getVariableExpr(Node $node)
 	{
-		// find in current vars
-		foreach (['foreach', 'method', 'class', 'global'] as $domain) {
-			if (!isset($this->vars[$domain][$varName])) continue;
-			for ($i = count($this->vars[$domain][$varName]) - 1; $i >= 0; $i--) {
-				$var = $this->vars[$domain][$varName][$i];
-				// TODO, ensure '<=' versus '<'
-				if ($var->getStartLine() <= $beforeLineNumber) {
-					return $var;
+		$varName = $this->getVarIdentifier($node);
+		$closure = $this->getNodeClosure($node);
+		if ($node instanceof Node\Expr\PropertyFetch && strtolower($node->var->name) == 'this') {
+			$varName = '$' . $node->name->name;
+			$closure = explode('::', $closure)[0];
+		}
+		if (isset($this->varStacks[$closure][$varName])) {
+			$vars = $this->varStacks[$closure][$varName];
+			for ($i = count($vars) - 1; $i >= 0; $i--) {
+				if ($vars[$i]->getStartLine() <= $node->getStartLine()) {
+					return $vars[$i];
 				}
 			}
 		}
 		return null;
-	}
-
-	protected function getGlobalVar($varName, $classOrFile)
-	{
-		if (!isset($this->varStacks[$classOrFile])) return null;
-		if (!isset($this->varStacks[$classOrFile][$varName])) return null;
-		$vars = $this->varStacks[$classOrFile][$varName];
-		return $vars[count($vars) - 1];
 	}
 
 	public function afterTraverse(array $nodes)
@@ -277,6 +282,8 @@ class VarStackVisitor extends NodeVisitorAbstract
 	{
 		if ($var instanceof Node\Expr\PropertyFetch) {
 			return $this->getVarIdentifier($var->var) . '->' . $this->getVarIdentifier($var->name);
+		} elseif ($var instanceof Node\Expr\ConstFetch) {
+			return implode('', $var->name->parts);
 		} elseif ($var instanceof Node\Expr\StaticPropertyFetch) {
 			return implode('\\', $var->class->parts) . '->' . $this->getVarIdentifier($var->name);
 		} elseif ($var instanceof Node\Expr\Variable) {
@@ -284,7 +291,7 @@ class VarStackVisitor extends NodeVisitorAbstract
 		} elseif ($var instanceof Node\Identifier) {
 			return $var->name;
 		} elseif ($var instanceof Node\Expr\ArrayDimFetch) {
-			return null;
+			return sprintf('%s[%s]', $this->getVarIdentifier($var->var), null == $var->dim ? '' : $this->getVarIdentifier($var->dim));
 		} elseif ($var instanceof Node\Expr\StaticCall) {
 			$className = implode('\\', $var->class->parts);
 			$methodName = $var->name->name;
@@ -303,6 +310,22 @@ class VarStackVisitor extends NodeVisitorAbstract
 			return sprintf('%s->%s(%s)', $varName, $methodName, implode(',', $args));
 		} elseif ($var instanceof Node\Const_) {
 			return $var->name->name;
+		} elseif ($var instanceof Node\Scalar) {
+			if ($var instanceof Node\Scalar\Encapsed) {
+				$ret = '';
+				foreach ($var->parts as $part) {
+					$ret .= $this->getVarIdentifier($part);
+				}
+				return $ret;
+			} else {
+				return $var->value;
+			}
+		} elseif ($var instanceof Node\Expr\FuncCall) {
+			$args = [];
+			foreach ($var->args as $arg) {
+				$args []= $this->getVarIdentifier($arg->value);
+			}
+			return sprintf('%s(%s)', implode('.', $var->name->parts), implode(',', $args));
 		}
 		$this->debug($var, 'unknown var type');
 	}
@@ -340,7 +363,6 @@ class VarStackVisitor extends NodeVisitorAbstract
 				implode("\n", $lines)
 				);
 		if ($stop) {
-			//die($message . "\n");
 			throw new \Exception($message);
 		} else {
 			echo "$message\n\n";
@@ -369,13 +391,14 @@ class VarStackVisitor extends NodeVisitorAbstract
 		return implode('\\', $classNode->extends->parts);
 	}
 
-	public function dumpVars()
+	public function dumpVars($expectedClosure = null)
 	{
 		echo "====== DUMPING VARS {{{ ======\n";
-		foreach ($this->vars as $domain => $vars) {
-			echo "=== $domain ===\n";
-			foreach ($vars as $name => $vararr) {
-				echo "  $name => " . $vararr[count($vararr) - 1]->getType() . "\n";
+		foreach ($this->varStacks as $closure => $vars) {
+			if ($expectedClosure && $closure != $expectedClosure) continue;
+			echo "=== $closure ===\n";
+			foreach ($vars as $name => $varArr) {
+				echo "  $name => " . $varArr[count($varArr) - 1]->getType() . "\n";
 			}
 		}
 		echo "====== }}} ======\n";

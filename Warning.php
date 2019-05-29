@@ -80,18 +80,20 @@ class Warning
 
 	public function getSourceInfo()
 	{
-		$ret = ['from' => -1, 'to' => -1, 'code' => ''];
+		$from = -1;
+		$to = -1;
+		$code = '';
 		if ($this->nodeInfo instanceof Node) {
-			$ret['from'] = $this->nodeInfo->getAttribute('startLine');
-			$ret['to'] = $this->nodeInfo->getAttribute('endLine');
+			$from = $this->nodeInfo->getAttribute('startLine');
+			$to = $this->nodeInfo->getAttribute('endLine');
 			if (empty($this->lines)) {
 				$this->lines = explode("\n", file_get_contents($this->file));
 			}
-			if (!empty($this->lines) && count($this->lines) >= $ret['from']) {
-				$ret['code'] = trim($this->lines[$ret['from'] - 1]);
+			if (!empty($this->lines) && count($this->lines) >= $to) {
+				$code = implode("\n", array_slice($this->lines, $from - 1, $to - $from + 1));
 			}
 		}
-		return $ret;
+		return ['from' => $from, 'to' => $to, 'code' => $code];
 	}
 
 	public static function addWarning(string $fileName, string $nodeName, $nodeInfo, string $message = '') {

@@ -2,6 +2,8 @@
 <?php declare(strict_types=1);
 /** vim: set noet ts=4 sw=4 fdm=indent: */
 
+ini_set('memory_limit', '1024m');
+
 require 'vendor/autoload.php';
 
 require 'RecordClassFinder.php';
@@ -87,6 +89,9 @@ foreach ($tables as $name => $classInfos) {
 }
 
 foreach (Warning::getWarnings() as $warn) {
-	echo $warn->getExpr($mode);
+	$info = $warn->getExpr($mode);
+	//if (strpos($info, 'INJECTION') !== false) {
+		echo $info;
+	//}
 }
 
