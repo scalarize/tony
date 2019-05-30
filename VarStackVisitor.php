@@ -17,6 +17,8 @@ class VarStackVisitor extends NodeVisitorAbstract
 	const FUNC_INSIDE = 4;
 	const METHOD_INSIDE = 8;
 
+	protected $traceInfoStack = [];
+
 	protected $target;
 	protected $vars;
 	protected $currentTarget;
@@ -122,20 +124,19 @@ class VarStackVisitor extends NodeVisitorAbstract
 			case 'Expr_ArrayDimFetch':
 				$arr = $this->getVariableExpr($node->expr);
 				if (null == $arr) {
-					// FIXME, ignore
-					// $this->debug($node->expr, 'cannot find foreach array for name: ' . $arrName);
-					break;
+					$this->registerForeachVars($node, $node->expr);
+				} else {
+					$this->registerForeachVars($node, $arr);
 				}
-				$this->registerForeachVars($node, $arr, null, 'foreach');
 				break;
 			case 'Expr_Array':
-				$this->registerForeachVars($node, $node->expr, null, 'foreach');
+				$this->registerForeachVars($node, $node->expr);
 				break;
 			case 'Expr_FuncCall':
 			case 'Expr_StaticCall':
 			case 'Expr_MethodCall':
 				// FIXME, 暂时没办法拆解, 只好先原样注册
-				$this->registerForeachVars($node, $node->expr, null, 'foreach');
+				$this->registerForeachVars($node, $node->expr);
 				break;
 			default:
 				$this->debug($node->expr, 'unknown foreach array var type: ' . $node->expr->getType());
@@ -143,7 +144,11 @@ class VarStackVisitor extends NodeVisitorAbstract
 			}
 			
 			if (!empty($this->vars['foreach'])) {
-				$this->varStacks[$closure . '::FOREACH_' . $node->getStartLine()] = $this->vars['foreach'];
+				if (!isset($this->varStacks[$closure . '::FOREACH'])) {
+					$this->varStacks[$closure . '::FOREACH'] = [];
+				}
+				$range = $node->getStartLine() . '-' . $node->getEndLine();
+				$this->varStacks[$closure . '::FOREACH'][$range] = $this->vars['foreach'];
 				$this->vars['foreach'] = []; 
 			}
 		} elseif ($node instanceof Node\Stmt\ClassConst) {
@@ -170,16 +175,16 @@ class VarStackVisitor extends NodeVisitorAbstract
 		if ($arr instanceof Node\Expr\Array_ && count($arr->items) > 0) {
 			foreach ($arr->items as $item) {
 				if ($node->keyVar !== null) {
-					$this->registerVar($node->keyVar, $item->key);
+					$this->registerVar($node->keyVar, $item->key, 'FOREACH_KEY', 'foreach');
 				}
-				$this->registerVar($node->valueVar, $item->value);
+				$this->registerVar($node->valueVar, $item->value, 'FOREACH_VALUE', 'foreach');
 			}
 		} else {
 			// FIXME, 临时方案, 把整个数组作为 var 对象, 先用一下
 			if ($node->keyVar !== null) {
-				$this->registerVar($node->keyVar, $arr, 'FOREACH_KEY');
+				$this->registerVar($node->keyVar, $arr, 'FOREACH_KEY', 'foreach');
 			}
-			$this->registerVar($node->valueVar, $arr, 'FOREACH_VALUE');
+			$this->registerVar($node->valueVar, $arr, 'FOREACH_VALUE', 'foreach');
 		}
 	}
 
@@ -215,7 +220,8 @@ class VarStackVisitor extends NodeVisitorAbstract
 	{
 		$varName = $this->getVarIdentifier($node);
 		$closure = $this->getNodeClosure($node);
-		if ($node instanceof Node\Expr\PropertyFetch && strtolower($node->var->name) == 'this') {
+		if ($node instanceof Node\Expr\PropertyFetch && isset($node->var->name)
+			&& is_string($node->var->name) && strtolower($node->var->name) == 'this') {
 			$varName = '$' . $node->name->name;
 			$closure = explode('::', $closure)[0];
 		}
@@ -224,6 +230,15 @@ class VarStackVisitor extends NodeVisitorAbstract
 			for ($i = count($vars) - 1; $i >= 0; $i--) {
 				if ($vars[$i]->getStartLine() <= $node->getStartLine()) {
 					return $vars[$i];
+				}
+			}
+		} elseif (isset($this->varStacks[$closure . '::FOREACH'])) {
+			// try to lookup foreach vars
+			foreach ($this->varStacks[$closure. '::FOREACH'] as $range => $vars) {
+				list($from, $to) = explode('-', $range);
+				if (!isset($vars[$varName])) continue;
+				if ($from <= $node->getStartLine() && $to >= $node->getEndLine()) {
+					return $vars[$varName];
 				}
 			}
 		}
@@ -326,6 +341,20 @@ class VarStackVisitor extends NodeVisitorAbstract
 				$args []= $this->getVarIdentifier($arg->value);
 			}
 			return sprintf('%s(%s)', implode('.', $var->name->parts), implode(',', $args));
+		} elseif ($var instanceof Node\Expr\BinaryOp\Concat) {
+			return $this->getVarIdentifier($var->left) . '.' . $this->getVarIdentifier($var->right);
+		} elseif ($var instanceof Node\Expr\BinaryOp\Div) {
+			return $this->getVarIdentifier($var->left) . '/' . $this->getVarIdentifier($var->right);
+		} elseif ($var instanceof Node\Expr\BinaryOp\Minus) {
+			return $this->getVarIdentifier($var->left) . '-' . $this->getVarIdentifier($var->right);
+		} elseif ($var instanceof Node\Expr\BinaryOp\Mul) {
+			return $this->getVarIdentifier($var->left) . '*' . $this->getVarIdentifier($var->right);
+		} elseif ($var instanceof Node\Expr\BinaryOp\Plus) {
+			return $this->getVarIdentifier($var->left) . '+' . $this->getVarIdentifier($var->right);
+		} elseif ($var instanceof Node\Expr\Cast\Int_) {
+			return '(int)' . $this->getVarIdentifier($var->expr);
+		} elseif ($var instanceof Node\Expr\UnaryMinus) {
+			return '-' . $this->getVarIdentifier($var->expr);
 		}
 		$this->debug($var, 'unknown var type');
 	}
@@ -346,22 +375,36 @@ class VarStackVisitor extends NodeVisitorAbstract
 		}
 	}
 
-	protected function debug($node, $message = '', $full = true, $stop = true)
+	protected function debug($node = null, $message = '', $full = true, $stop = true)
 	{
-		if ($full) {
-			$dumpNode = clone $node;
-			$this->removeTagsForDump($dumpNode);
-			var_dump($dumpNode);
+		if ($node instanceof Node) {
+			if ($full) {
+				$dumpNode = clone $node;
+				$this->removeTagsForDump($dumpNode);
+				var_dump($dumpNode);
+			} else {
+				echo get_class($node) . ", depth: " . count($this->nodeStack) . "\n";
+			}
+			$from = $node->getStartLine();
+			$to = $node->getEndLine();
+			$lines = array_slice($this->currentLines, $from-1, $to-$from+1);
+			printf("file:\n%s\nline:%s-%s\ncode:%s\n",
+					$this->currentTarget, $from, $to,
+					implode("\n", $lines)
+					);
 		} else {
-			echo get_class($node) . ", depth: " . count($this->nodeStack) . "\n";
+			var_dump($node);
 		}
-		$from = $node->getStartLine();
-		$to = $node->getEndLine();
-		$lines = array_slice($this->currentLines, $from-1, $to-$from+1);
-		printf("file:\n%s\nline:%s-%s\ncode:%s\n",
-				$this->currentTarget, $from, $to,
-				implode("\n", $lines)
-				);
+		if ($this->traceInfoStack) {
+			printf("TRACE:\n");
+			foreach ($this->traceInfoStack as $traceInfo) {
+				if (is_string($traceInfo)) {
+					printf("  - %s\n", $traceInfo);
+				} else {
+					printf("  - %s\n", var_export($traceInfo, true));
+				}
+			}
+		}
 		if ($stop) {
 			throw new \Exception($message);
 		} else {
@@ -408,6 +451,16 @@ class VarStackVisitor extends NodeVisitorAbstract
 	{
 		// TODO, ensure 'closure' attribute has no conflict with other usages
 		return $node->getAttribute('closure');
+	}
+
+	public function trace($message)
+	{
+		$this->traceInfoStack []= $message;
+	}
+
+	public function resetTrace()
+	{
+		$this->traceInfoStack = [];
 	}
 
 }

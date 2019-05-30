@@ -24,8 +24,20 @@ if (empty($args['t'])) {
 $visitor = new VarStackVisitor($args['t']);
 $visitor->traverse();
 foreach ($visitor->getVarStacks() as $section => $vars) {
-	if (isset($args['s']) && $section != $args['s']) continue;
+	if (isset($args['s']) && strpos($section, $args['s']) === false) continue;
 	echo "=== $section ===\n";
+	if (strpos($section, '::FOREACH') !== false) {
+		foreach ($vars as $range => $foreachVars) {
+			echo " $range:\n";
+			__show_vars($foreachVars);
+		}
+	} else {
+		__show_vars($vars);
+	}
+}
+
+function __show_vars($vars)
+{
 	foreach ($vars as $name => $vals) {
 		if (count($vals) == 1) {
 			printf("  %s => %s (at line: %d)\n", $name, __expr($vals[0]), $vals[0]->getStartLine());

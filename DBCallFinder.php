@@ -1,5 +1,5 @@
 <?php declare(strict_types=1);
-/** vim: set noet ts=4 sw=4 fdm=indent: */
+/** vim: set number noet ts=4 sw=4 fdm=indent: */
 
 namespace TonyParser;
 
@@ -46,6 +46,8 @@ class DBCallFinder extends VarStackVisitor
 
 	protected function checkNode(Node $node)
 	{
+		$this->resetTrace();
+		$this->trace(sprintf('%s:(%s)  %s: %s', __METHOD__, __LINE__, $this->getNodeClosure($node), $node->getStartLine()));
 		if (isset($node->var->name->name)) {
 			$dbName = $node->var->name->name;
 		} else {
@@ -59,13 +61,27 @@ class DBCallFinder extends VarStackVisitor
 		}
 		if (empty($node->args)) {
 			// vacant sql command, often comes with select / from methods
+			// TODO, build complete sql
 			$dbCallFound = false;
 			$parent = $node->getAttribute('parent');
 			while ($parent) {
-				if (!$parent instanceof Node\Stmt\MethodCall) break;
-				if (strtolower($parent->name->name) == 'from' && count($parent->args) == 1) {
-					foreach ($this->buildSQLSamplesFromExpr($parent->args[0]->value) as $sqlSample) {
-						$this->registerDBCalls('fromCall', $dbName, 'unknown', $sqlSample);
+				if (!$parent instanceof Node\Expr\MethodCall) break;
+				$methodName = strtolower($parent->name->name);
+				switch ($methodName) {
+				case 'from':
+				case 'join':
+				case 'leftjoin':
+				case 'rightjoin':
+				case 'natualjoin':
+					$currentDBName = $dbName;
+					if (count($parent->args) >= 1) {
+						foreach ($this->buildSQLSamplesFromExpr($parent->args[0]->value) as $tableSample) {
+							$tableName = explode(' ', $tableSample)[0];
+							if (strpos($tableName, '.') !== false) {
+								list($currentDBName, $tableName) = explode('.', $tableName);
+							}
+							$this->registerDBCalls('commandCall_' . $methodName, $currentDBName, $tableName, '');
+						}
 					}
 					$dbCallFound = true;
 					break;
@@ -85,62 +101,66 @@ class DBCallFinder extends VarStackVisitor
 	 * generator function
 	 * yields [sql, errorMessage] as warning
 	 */
-	protected function checkSQLSample($node, $dbName, $sqlSampleGenerator)
+	protected function checkSQLSample($node, $dbName, $sqlSample)
 	{
-		foreach ($sqlSampleGenerator as $sqlSample) {
+		$this->trace(sprintf('%s:(%s)  %s', __METHOD__, __LINE__, $sqlSample));
 
-			if (strpos($sqlSample, 'METHOD_PARAM::') !== false) {
-				yield [$sqlSample, 'POTENTIAL INJECTION. sql contains method param as string'];
-				return;
-			}
-			if (strpos($sqlSample, 'METHOD_CALL::') !== false) {
-				yield [$sqlSample, 'POTENTIAL INJECTION. sql contains method call return value as string'];
-				return;
-			}
-			if (strpos($sqlSample, 'OBJECT_PROPERTY::') !== false) {
-				yield [$sqlSample, 'POTENTIAL INJECTION. sql contains object property as string'];
-				return;
-			}
-			if (strpos($sqlSample, 'FUNCTION_CALL::') !== false) {
-				yield [$sqlSample, 'POTENTIAL INJECTION. sql contains function call as string'];
-				return;
-			}
-			if (strpos($sqlSample, 'ARRAY_FETCH::') !== false) {
-				yield [$sqlSample, 'POTENTIAL INJECTION. sql contains array dim fetch value as string'];
-				return;
-			}
-			if (strpos($sqlSample, 'ARRAY::') !== false) {
-				yield [$sqlSample, 'POTENTIAL INJECTION. sql contains array dim fetch value as string'];
-				return;
-			}
-			if (strpos($sqlSample, 'CONST::') !== false) {
-				yield [$sqlSample, 'POTENTIAL INJECTION. sql contains const value as string'];
-				return;
-			}
-			if (strpos($sqlSample, 'PROPERTY_FETCH::') !== false) {
-				yield [$sqlSample, 'POTENTIAL INJECTION. sql contains property fetch as string'];
-				return;
-			}
+		if (strpos($sqlSample, 'METHOD_PARAM::') !== false) {
+			yield [$sqlSample, 'POTENTIAL INJECTION. sql contains method param as string'];
+			return;
+		}
+		if (strpos($sqlSample, 'METHOD_CALL::') !== false) {
+			yield [$sqlSample, 'POTENTIAL INJECTION. sql contains method call return value as string'];
+			return;
+		}
+		if (strpos($sqlSample, 'OBJECT_PROPERTY::') !== false) {
+			yield [$sqlSample, 'POTENTIAL INJECTION. sql contains object property as string'];
+			return;
+		}
+		if (strpos($sqlSample, 'FUNCTION_CALL::') !== false) {
+			yield [$sqlSample, 'POTENTIAL INJECTION. sql contains function call as string'];
+			return;
+		}
+		if (strpos($sqlSample, 'ARRAY_FETCH::') !== false) {
+			yield [$sqlSample, 'POTENTIAL INJECTION. sql contains array dim fetch value as string'];
+			return;
+		}
+		if (strpos($sqlSample, 'ARRAY::') !== false) {
+			yield [$sqlSample, 'POTENTIAL INJECTION. sql contains array dim fetch value as string'];
+			return;
+		}
+		if (strpos($sqlSample, 'CONST::') !== false) {
+			yield [$sqlSample, 'POTENTIAL INJECTION. sql contains const value as string'];
+			return;
+		}
+		if (strpos($sqlSample, 'PROPERTY_FETCH::') !== false) {
+			yield [$sqlSample, 'POTENTIAL INJECTION. sql contains property fetch as string'];
+			return;
+		}
 
-			try {
-				$sqlParser = new PHPSQLParser($sqlSample, true);
-			} catch (\Exception $e) {
-				$this->debug($node, 'invalid sql: ' . $sqlSample, false, false);
-				throw $e;
-			}
-			$tables = $this->getTablesFromParsedSQL($sqlParser->parsed);
-			foreach ($tables as $table) {
-				$this->registerDBCalls('fromSQLSample', $dbName, $table, $sqlSample);
-			}
+		try {
+			$sqlParser = new PHPSQLParser($sqlSample, true);
+		} catch (\Exception $e) {
+			$this->debug($node, 'invalid sql: ' . $sqlSample, false, false);
+			throw $e;
+		}
+		$tables = $this->getTablesFromParsedSQL($sqlParser->parsed);
+		foreach ($tables as $table) {
+			$this->registerDBCalls('fromSQLSample', $dbName, $table, $sqlSample);
 		}
 	}
 
 	protected function checkSQL(Node $node, string $dbName, Node\Expr $sqlExpr)
 	{
+		$this->trace(sprintf('%s:(%s)  db:%s, sqlvar:%s, line:%s', __METHOD__, __LINE__,
+				$dbName, $this->getVarIdentifier($sqlExpr), $sqlExpr->getStartLine()));
 		$sqlSamples = $this->buildSQLSamplesFromExpr($sqlExpr);
-		foreach ($this->checkSQLSample($node, $dbName, $sqlSamples) as $checkResult) {
-			list($sqlSample, $errorMessage) = $checkResult;
-			Warning::addWarning($node->getAttribute('file'), $sqlSample, $sqlExpr, $errorMessage);
+		foreach ($sqlSamples as $sqlSample) {
+
+			foreach ($this->checkSQLSample($node, $dbName, $sqlSample) as $checkResult) {
+				list($sqlSample, $errorMessage) = $checkResult;
+				Warning::addWarning($node->getAttribute('file'), $sqlSample, $sqlExpr, $errorMessage);
+			}
 		}
 
 	}
@@ -151,28 +171,37 @@ class DBCallFinder extends VarStackVisitor
 	 */
 	protected function buildSQLSamplesFromExpr($expr)
 	{
+		if (!$expr instanceof Node\Expr) {
+			$this->debug(null, 'unexpected sql expression encountered, may be yielded badly before, see trace info');
+		}
 		$exprType = $expr->getType();
+		$exprName = $this->getVarIdentifier($expr);
+		$this->trace(sprintf('%s:(%s)  %s: %s', __METHOD__, __LINE__, $exprName, $exprType));
 		$func = 'buildSQLSamplesFromExprType_' . $exprType;
 		if (method_exists($this, $func)) {
 			foreach ($this->$func($expr) as $sqlSample) {
 				yield $sqlSample;
 			}
 		} else {
-			$this->debug($expr, 'unknown sql expr type: ' . $expr->getType());
+			$this->debug($expr, 'unknown sql expr type: ' . $exprType);
 		}
 	}
 
 	public function buildSQLSamplesFromExprType_Expr_Variable(Node\Expr\Variable $expr)
 	{
-		$varExpr = $this->getVariableExpr($expr);
 		$varName = $this->getVarIdentifier($expr);
+		$varExpr = $this->getVariableExpr($expr);
+		if (!$varExpr instanceof Node\Expr) {
+			yield gettype($varExpr) . '::' . $varName;
+			return;
+		}
 		if ($varExpr !== null) {
 			foreach ($this->buildSQLSamplesFromExpr($varExpr) as $sqlSample) {
 				yield $sqlSample;
 			}
 
 		} else {
-			$this->debug($expr, 'unknown var name, may be dangerous or not properly extracted from locals/objects: ' . $this->getVarIdentifier($expr));
+			$this->debug($expr, 'unknown var name, may be dangerous or not properly extracted from locals/objects: ' . $varName);
 		}
 	}
 
@@ -206,7 +235,7 @@ class DBCallFinder extends VarStackVisitor
 
 	public function buildSQLSamplesFromExprType_Scalar_Encapsed(Node\Scalar\Encapsed $expr)
 	{
-		$ret = [];
+		$ret = [''];
 		foreach ($expr->parts as $part) {
 			foreach ($this->buildSQLSamplesFromExpr($part) as $sampleOfPart) {
 				$newRet = [];
@@ -238,6 +267,17 @@ class DBCallFinder extends VarStackVisitor
 
 	public function buildSQLSamplesFromExprType_Expr_ArrayDimFetch(Node\Expr\ArrayDimFetch $expr)
 	{
+		// FIXME
+		// we dunno whether its a simple array referring
+		//$arr = $this->getVariableExpr($expr->var);
+		//$dim = $this->getVariableExpr($expr->dim);
+		//if (is_array($arr) && !is_object($dim) && isset($arr[$dim])) {
+		//	foreach ($this->buildSQLSamplesFromExpr($arr[$dim]) as $sqlSample) {
+		//		yield $sqlSample;
+		//	}
+		//	return;
+		//}
+
 		foreach ($this->buildSQLSamplesFromExpr($expr->var) as $varSample) {
 			foreach ($this->buildSQLSamplesFromExpr($expr->dim) as $dimSample) {
 				yield sprintf('ARRAY_FETCH::%s[%s]', $varSample, $dimSample);
@@ -415,7 +455,7 @@ class DBCallFinder extends VarStackVisitor
 		$format = $args[0]->value;
 		foreach ($this->buildSQLSamplesFromExpr($format) as $formatSample) {
 			$func = new \ReflectionFunction('sprintf');
-			$invokeArgsSet = [];
+			$invokeArgsSet = [[]];
 			for ($i = 1, $cnt = count($args); $i < $cnt; ++$i) {
 				$newInvokeArgsSet = [];
 				foreach ($this->buildSQLSamplesForArg($invokeArgsSet, $args[$i]) as $builtArgs) {
@@ -442,7 +482,7 @@ class DBCallFinder extends VarStackVisitor
 				}
 			}
 		} elseif ($arr instanceof Node\Expr\Array_) {
-			$sampledItemsSet = [];
+			$sampledItemsSet = [[]];
 			foreach ($arr->items as $item) {
 				foreach ($this->buildSQLSamplesFromExpr($item->value) as $itemSample) {
 					$newSampledItemsSet = [];
@@ -528,7 +568,7 @@ class DBCallFinder extends VarStackVisitor
 	{
 		foreach ($argsSet as $args) {
 			foreach ($this->buildSQLSamplesFromExpr($arg->value) as $argSample) {
-				$ret = clone $args;
+				$ret = $args;
 				$ret []= $argSample;
 				yield $ret;
 			}
