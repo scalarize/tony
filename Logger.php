@@ -9,6 +9,7 @@ class Logger
 	public static function info($message)
 	{
 		printf("[%s] INFO: %s\n", date('Y-m-d H:i:s'), $message);
+		flush();
 	}
 
 }
