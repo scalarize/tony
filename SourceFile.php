@@ -3,9 +3,15 @@
 
 namespace TonyParser;
 
+require 'vendor/autoload.php';
+
+use PhpParser\Node;
+use PhpParser\{Parser, ParserFactory};
+
 final class SourceFile
 {
 
+	/** global cache of filename => SourceFile object */
 	private static $sources = [];
 
 	public static function registerSourceFile(string $fileOrDir)
@@ -44,8 +50,15 @@ final class SourceFile
 	}
 
 	protected $filename;
+
+	/** local in-memory cache of lines */
 	private $lines = null;
+
+	/** local in-memory cache of content */
 	private $content = null;
+
+	/** local in-memory cache of parsed nodes */
+	private $nodes = null;
 
 	public function __construct(string $filename)
 	{
@@ -97,6 +110,18 @@ final class SourceFile
 		}
 
 		return implode($separator, array_slice($lines, $index, $count));
+	}
+
+	/**
+	 * get nodes by parsing source file
+	 */
+	public function getParsedNodes()
+	{
+		if ($this->nodes === null) {
+			$parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP5); # or PREFER_PHP7, if your code is pure php7
+			$this->nodes = $parser->parse($this->getContent());
+		}
+		return $this->nodes;
 	}
 
 }
