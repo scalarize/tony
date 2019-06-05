@@ -142,7 +142,7 @@ class DBCallFinder extends VarStackVisitor
 				}
 			}
 		} else {
-			$sqlVar = $node->args[0]->value;
+			$sqlVar = $this->getVariableExpr($node->args[0]->value);
 			if ($sqlVar instanceof Node\Expr\Array_) {
 				// find with criteria array
 				foreach ($classInfo->getYiiDBNames() as $dbName) {
@@ -153,7 +153,7 @@ class DBCallFinder extends VarStackVisitor
 			} else {
 				foreach ($classInfo->getYiiDBNames() as $dbName) {
 					foreach ($classInfo->getYiiTableNames() as $tableName) {
-						$this->checkSQL($node, $dbName, $sqlVar, 'SELECT * FROM ' . $tableName . ' ');
+						$this->checkSQL($node, $dbName, $node->args[0]->value, 'SELECT * FROM ' . $tableName . ' ');
 					}
 				}
 			}
@@ -407,7 +407,7 @@ class DBCallFinder extends VarStackVisitor
 	public function buildSQLSamplesFromExprType_Param(Node\Param $expr)
 	{
 		// TODO, impl
-		yield 'PARAM::' . $expr->var->name;
+		yield 'METHOD_PARAM::' . $expr->var->name;
 	}
 
 	public function buildSQLSamplesFromExprType_Expr_ArrayDimFetch(Node\Expr\ArrayDimFetch $expr)
@@ -482,6 +482,19 @@ class DBCallFinder extends VarStackVisitor
 			yield '';
 		}
 		yield 'CONST::' . $const;
+	}
+
+	public function buildSQLSamplesFromExprType_Expr_ClassConstFetch(Node\Expr\ClassConstFetch $expr)
+	{
+		// TODO probe const value
+		$sqlExpr = $this->getVariableExpr($expr);
+		if (null == $sqlExpr) {
+			yield 'CLASS_CONST::' . $this->getVarIdentifier($expr);
+			return;
+		}
+		foreach ($this->buildSQLSamplesFromExpr($sqlExpr) as $sqlSample) {
+			yield $sqlSample;
+		}
 	}
 
 	public function buildSQLSamplesFromExprType_Expr_BinaryOp_Mul(Node\Expr\BinaryOp $expr)
@@ -561,24 +574,8 @@ class DBCallFinder extends VarStackVisitor
 		// 	}
 
 		// 	/**
-		// } elseif ($expr instanceof Node\Expr\ClassConstFetch) {
-		// 	$className = implode($expr->class->parts);
-		// 	if (strtolower($className) == 'self') {
-		// 		$className = $this->currentClass->name->name;
-		// 	}
-		// 	do {
-		// 		$constName = $className . '::' . $this->getVarIdentifier($expr->name);
-		// 		$const = $this->getGlobalVar($constName, $className);
-		// 	} while (null == $const && ($className = $this->getAncestorName($className)) != null);
-		// 	if (null == $const) {
-		// 		return sprintf('CONST::$%s::%s', $class, $expr->name->name);
-		// 	} else {
-		// 		return $this->buildSQLSampleFromVariable($const);
-		// 	}
 
-
-
-		// } elseif ($expr instanceof Node\Expr\Ternary) {
+		//} elseif ($expr instanceof Node\Expr\Ternary) {
 		// 	// TODO, also check else
 		// 	return $this->buildSQLSampleFromVariable($expr->if);
 

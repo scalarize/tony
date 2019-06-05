@@ -22,7 +22,7 @@ function usage() {
 
 $args = getopt('t:m:r:');
 $target = $args['t'];
-$root = $args['r'] ? $args['r'] : $target;
+$root = isset($args['r']) ? $args['r'] : $target;
 $mode = empty($args['m']) ? 'plain' : $args['m'];
 
 if (empty($target)) {

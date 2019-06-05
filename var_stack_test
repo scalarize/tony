@@ -2,9 +2,13 @@
 <?php declare(strict_types=1);
 /** vim: set noet ts=4 sw=4 fdm=indent: */
 
+set_time_limit(0);
+ini_set('display_errors', 'on');
+ini_set('memory_limit', '1024m');
+
 require 'vendor/autoload.php';
 
-require 'VarStackVisitor.php';
+require_once 'VarStackVisitor.php';
 
 use PhpParser\{Node, NodeFinder};
 use PhpParser\{Parser, ParserFactory};
@@ -12,7 +16,7 @@ use TonyParser\{VarStackVisitor};
 
 function usage() {
 	global $argv;
-	echo "Usage: php $argv[0] -t <target_file_or_dir_to_parse> -s [section_to_show]\n";
+	echo "Usage: ./$argv[0] -t <target_file_or_dir_to_parse> -s [section_to_show]\n";
 }
 
 $args = getopt('t:s:v');

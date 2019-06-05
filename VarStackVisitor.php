@@ -7,6 +7,7 @@ require 'vendor/autoload.php';
 
 require_once 'Logger.php';
 require_once 'SourceFile.php';
+require_once 'Warning.php';
 
 use PhpParser\{Node, NodeVisitorAbstract, NodeTraverser};
 use PhpParser\{Parser, ParserFactory};
@@ -382,6 +383,12 @@ class VarStackVisitor extends NodeVisitorAbstract
 			return 'CLASS::' . implode('\\', $var->class->parts);
 		} elseif ($var instanceof Node\Expr\Array_) {
 			return null;
+		} elseif ($var instanceof Node\Expr\ClassConstFetch) {
+			$className = implode($var->class->parts);
+			if (strtolower($className) == 'self') {
+				$className = $this->getNodeClass($var);
+			}
+			return $className . '::' . $var->name->name;
 		}
 		$this->debug($var, 'unknown var type: ' . $var->getType());
 	}
