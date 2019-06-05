@@ -229,6 +229,10 @@ class VarStackVisitor extends NodeVisitorAbstract
 
 	protected function getVariableExpr(Node $node)
 	{
+		if ($node instanceof Node\Expr\Array_) {
+			return $node;
+		}
+
 		$varName = $this->getVarIdentifier($node);
 		$closure = $this->getNodeClosure($node);
 		if ($node instanceof Node\Expr\PropertyFetch && isset($node->var->name)
