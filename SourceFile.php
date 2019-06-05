@@ -122,6 +122,11 @@ final class SourceFile
 			$this->nodes = $parser->parse($this->getContent());
 		}
 		return $this->nodes;
+		/**
+		 * if memory limit exceeded, maybe we should skip local nodes cache
+		$parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP5); # or PREFER_PHP7, if your code is pure php7
+		return $parser->parse($this->getContent());
+		 */
 	}
 
 }

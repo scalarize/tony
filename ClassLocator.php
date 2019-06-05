@@ -35,7 +35,7 @@ final class ClassLocator
 		self::$classInfoCache[$className] = $classInfo;
 	}
 
-	public static function locateClass($className, $root)
+	public static function locateClass(string $className, string $root)
 	{
 
 		$classNameLower = strtolower($className);
@@ -49,23 +49,25 @@ final class ClassLocator
 			$filename = $sourceFile->getFilename();
 			if (isset(self::$searched[$filename])) continue;
 
-			Logger::info("parsing file $filename to locate class $className");
+			//Logger::info("parsing file $filename to locate class $className");
 
 			$nodeFinder = new NodeFinder;
 
 			$found = null;
 			foreach ($nodeFinder->find($sourceFile->getParsedNodes(), function(Node $node) {
 				return $node instanceof Node\Stmt\Class_;
-				}) as $cls) {
+				}) as $classNode) {
+
+				//Logger::info("found class $classNode->name from file $filename");
 				// whatever class found, fill class and source file cache, to avoid future re-searching
-				$classInfo = new ClassInfo($cls, $sourceFile);
+				$classInfo = new ClassInfo($classNode, $sourceFile);
 				self::registerLocatedClass($classInfo);
-				self::$searched[$filename] = true;
 
 				if ($classNameLower === strtolower($classInfo->getClassName())) {
 					$found = $classInfo;
 				}
 			}
+			self::$searched[$filename] = true;
 			if ($found) return $found;
 		}
 

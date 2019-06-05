@@ -2,6 +2,10 @@
 <?php declare(strict_types=1);
 /** vim: set noet ts=4 sw=4 fdm=indent: */
 
+set_time_limit(0);
+ini_set('display_errors', 'on');
+ini_set('memory_limit', '1024m');
+
 require 'vendor/autoload.php';
 
 require_once 'ClassLocator.php';
