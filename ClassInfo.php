@@ -1,9 +1,11 @@
 <?php declare(strict_types=1);
 /** vim: set noet ts=4 sw=4 fdm=indent: */
 
-use PhpParser\Node;
-
 namespace TonyParser;
+
+require_once 'SourceFile.php';
+
+use PhpParser\Node;
 
 abstract class NodeInfo
 {
@@ -14,13 +16,13 @@ class ClassInfo extends NodeInfo
 {
 
 	protected $cls;
-	protected $file;
+	protected $sourceFile;
 	protected $ancestors = [];
 	protected $children = [];
 
-	public function __construct($cls, $file) {
+	public function __construct($cls, $sourceFile) {
 		$this->cls = $cls;
-		$this->file = $file;
+		$this->sourceFile = $sourceFile;
 	}
 
 	public function getNode()
@@ -43,8 +45,8 @@ class ClassInfo extends NodeInfo
 		return [];
 	}
 
-	public function getFile() {
-		return $this->file;
+	public function getSourceFile() {
+		return $this->sourceFile;
 	}
 
 	public function getParentIdentifier() {
@@ -154,8 +156,8 @@ class ClassInfo extends NodeInfo
 		return null;
 	}
 
-	public function getFileName() {
-		return $this->file;
+	public function getFilename() {
+		return $this->sourceFile->getFilename();
 	}
 
 	public function addChild($child) {

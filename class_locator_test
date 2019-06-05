@@ -1,0 +1,35 @@
+#!/usr/bin/env php
+<?php declare(strict_types=1);
+/** vim: set noet ts=4 sw=4 fdm=indent: */
+
+require 'vendor/autoload.php';
+
+require_once 'ClassLocator.php';
+
+use TonyParser\ClassLocator;
+
+function usage() {
+	global $argv;
+	echo "Usage: ./$argv[0] -r <locator_root>\n";
+}
+
+$args = getopt('r:c:');
+
+if (!isset($args['r'])) {
+	usage();
+	exit;
+}
+
+$root = $args['r'];
+$class = isset($args['c']) ? $args['c'] : 'all';
+
+$found = ClassLocator::locateClass($class, $root);
+if ($found) {
+	echo "FOUND class: " . $found->getClassName() . " from source file: " . $found->getFilename() . "\n";
+} else {
+	echo "NOT FOUND, all classes located:\n";
+	foreach (ClassLocator::getLocatedClasses() as $classInfo) {
+		echo "classInfo class: " . $classInfo->getClassName() . " from source file: " . $classInfo->getFilename() . "\n";
+	}
+}
+

@@ -7,86 +7,70 @@ require 'vendor/autoload.php';
 
 require_once 'SourceFile.php';
 require_once 'Logger.php';
+require_once 'ClassInfo.php';
 
 use PhpParser\{Node, NodeFinder};
-use PhpParser\{Parser, ParserFactory};
 
 /**
- * find a model class from a referrer
+ * find a named class
+ * by scan and parse source files under root
  */
-class ClassLocator
+final class ClassLocator
 {
 
+	/** global in-memory cache of classname => ClassInfo object */
 	protected static $classInfoCache = [];
+
+	/** global in-memory cache of filename => searched flag */
 	protected static $searched = [];
 
-	protected $referrer;
-	protected $class;
-	protected $classLower;
-	protected $root;
-
-	/** null means not searched; false means not found */
-	protected $classInfo = null;
-
-	public function __construct($referrer, $class, $root)
+	public static function getLocatedClasses()
 	{
-		$this->referrer = realpath($referrer);
-		$this->class = $class;
-		$this->classLower = strtolower($class);
-		$this->root = realpath($root);
+		return self::$classInfoCache;
 	}
 
-	protected function locateClass(string $target)
+	public static function registerLocatedClass(ClassInfo $classInfo)
 	{
-		SourceFile::registerSourceFile($target);
+		$className = strtolower($classInfo->getClassName());
+		self::$classInfoCache[$className] = $classInfo;
+	}
+
+	public static function locateClass($className, $root)
+	{
+
+		$classNameLower = strtolower($className);
+		if (isset(self::$classInfoCache[$classNameLower])) {
+			return self::$classInfoCache[$classNameLower];
+		}
+
+		SourceFile::registerSourceFile($root);
+
 		foreach (SourceFile::getRegisteredSourceFiles() as $sourceFile) {
 			$filename = $sourceFile->getFilename();
 			if (isset(self::$searched[$filename])) continue;
 
-			Logger::info('parsing file ' . $sourceFile->getFilename() . ' to locate class ' . $this->class);
-			$parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP5); # or PREFER_PHP7, if your code is pure php7
-			$nodes = $parser->parse($sourceFile->getContent());
+			Logger::info("parsing file $filename to locate class $className");
 
 			$nodeFinder = new NodeFinder;
 
-			foreach ($nodeFinder->find($nodes, function(Node $node) {
+			$found = null;
+			foreach ($nodeFinder->find($sourceFile->getParsedNodes(), function(Node $node) {
 				return $node instanceof Node\Stmt\Class_;
 				}) as $cls) {
 				// whatever class found, fill class and source file cache, to avoid future re-searching
-				$classInfo = new ClassInfo($cls, $target);
-				$className = strtolower($classInfo->getClassName());
-				self::$classInfoCache[$className] = $classInfo;
+				$classInfo = new ClassInfo($cls, $sourceFile);
+				self::registerLocatedClass($classInfo);
 				self::$searched[$filename] = true;
-				if ($className === $this->classLower) {
-					return $classInfo;
+
+				if ($classNameLower === strtolower($classInfo->getClassName())) {
+					$found = $classInfo;
 				}
 			}
+			if ($found) return $found;
 		}
 
-		// current target not matched, go up one level
-		$upperTarget = realpath(dirname($target));
-		if (strlen($upperTarget) < strlen($this->root)) {
-			// up way to far, abort
-			return false;
-		}
-		if (substr($upperTarget, 0, strlen($this->root)) !== $this->root) {
-			// jumped out, may be symbol link, abort
-			return false;
-		}
-		return $this->locateClass($upperTarget);
-	}
+		return null;
 
-	public function getClassInfo() {
-		if (isset(self::$classInfoCache[$this->class])) {
-			$this->classInfo = self::$classInfoCache[$this->class];
-		}
-		if ($this->classInfo === null) {
-			$this->classInfo = $this->locateClass($this->referrer);
-		}
-		if ($this->classInfo === false) {
-			return null;
-		}
-		return $this->classInfo;
 	}
 
 }
