@@ -5,6 +5,8 @@ namespace TonyParser;
 
 require 'vendor/autoload.php';
 
+require_once 'Logger.php';
+
 use PhpParser\{Node, NodeVisitorAbstract, NodeTraverser};
 use PhpParser\{Parser, ParserFactory};
 
@@ -17,32 +19,35 @@ class VarStackVisitor extends NodeVisitorAbstract
 	const FUNC_INSIDE = 4;
 	const METHOD_INSIDE = 8;
 
-	protected $traceInfoStack = [];
+	private $traceInfoStack = [];
 
-	protected $target;
-	protected $vars;
-	protected $currentTarget;
-	protected $currentLines;
+	protected $root;
+	private $target;
+	private $vars;
+	private $currentTarget;
+	private $currentLines;
 
 	// to track node relationship
-	protected $nodeStack = [];
+	private $nodeStack = [];
 
 	// to decide where we are
-	protected $state = null;
+	private $state = null;
 
 	// store all variables
-	protected $varStacks = [];
+	private $varStacks = [];
 
-	protected $currentClass;
-	protected $currentMethod;
-	protected $classStack;
+	private $currentClass;
+	private $currentMethod;
+	private $classStack;
 
-	public function __construct($target)
+	public function __construct($target, $root = null)
 	{
 		if (!file_exists($target)) {
 			throw new \Exception('no such file: ' . $target);
 		}
 		$this->target = $target;
+		$this->root = $root ? $root : $target;
+
 		$this->state = self::NOT_STARTED;
 		$this->classStack = [];
 	}
@@ -50,6 +55,7 @@ class VarStackVisitor extends NodeVisitorAbstract
 	/** @override */
 	public function beforeTraverse(array $nodes)
 	{
+		Logger::info('trying to traverse ' . $this->currentTarget);
 		$this->vars = [];
 		$this->nodeStack = [];
 		$this->state = self::GLOBAL_SCOPE;
@@ -179,6 +185,13 @@ class VarStackVisitor extends NodeVisitorAbstract
 				}
 				$this->registerVar($node->valueVar, $item->value, 'FOREACH_VALUE', 'foreach');
 			}
+		} elseif (is_array($arr)) {
+			foreach ($arr as $key => $val) {
+				if ($node->keyVar !== null) {
+					$this->registerVar($node->keyVar, $key, null, 'foreach');
+				}
+				$this->registerVar($node->valueVar, $val, null, 'foreach');
+			}
 		} else {
 			// FIXME, 临时方案, 把整个数组作为 var 对象, 先用一下
 			if ($node->keyVar !== null) {
@@ -225,6 +238,12 @@ class VarStackVisitor extends NodeVisitorAbstract
 			$varName = '$' . $node->name->name;
 			$closure = explode('::', $closure)[0];
 		}
+
+		$target = $node->getAttribute('file');
+		if (!isset($this->varStacks[$closure])) {
+			$this->varStacks = $this->loadVarsFromCache($target);
+		}
+
 		if (isset($this->varStacks[$closure][$varName])) {
 			$vars = $this->varStacks[$closure][$varName];
 			for ($i = count($vars) - 1; $i >= 0; $i--) {
@@ -252,6 +271,30 @@ class VarStackVisitor extends NodeVisitorAbstract
 			$this->vars = [];
 		}
 		$this->state = self::NOT_STARTED;
+
+		// serialize to reduce memory usage
+		$this->dumpVarsToCache($this->varStacks, $this->currentTarget);
+		$this->varStacks = [];
+		Logger::info('traverse done for ' . $this->currentTarget);
+	}
+
+	private function getCacheName($target)
+	{
+		return '.cache/' . str_replace('/', '_', $target) . '.cache';
+	}
+
+	private function loadVarsFromCache($target)
+	{
+		$cacheFile = $this->getCacheName($target);
+		if (!file_exists($cacheFile)) {
+			return [];
+		}
+		return unserialize(file_get_contents($cacheFile));
+	}
+
+	private function dumpVarsToCache($vars, $target)
+	{
+		file_put_contents($this->getCacheName($target), serialize($vars));
 	}
 
 	public function traverse()
@@ -293,6 +336,7 @@ class VarStackVisitor extends NodeVisitorAbstract
 		return $this->varStacks;
 	}
 
+	/** @return null means no identifier required */
 	protected function getVarIdentifier($var)
 	{
 		if ($var instanceof Node\Expr\PropertyFetch) {
@@ -355,8 +399,16 @@ class VarStackVisitor extends NodeVisitorAbstract
 			return '(int)' . $this->getVarIdentifier($var->expr);
 		} elseif ($var instanceof Node\Expr\UnaryMinus) {
 			return '-' . $this->getVarIdentifier($var->expr);
+		} elseif ($var instanceof Node\Expr\New_) {
+			// TODO
+			// cdbcriteria here, could be explored deep
+			// debug this:
+			// ./db_reference_finder -t  sample/mis-rtb/protected/models//DspBaseModel.php -r sample/mis-rtb/
+			return 'CLASS::' . implode('\\', $var->class->parts);
+		} elseif ($var instanceof Node\Expr\Array_) {
+			return null;
 		}
-		$this->debug($var, 'unknown var type');
+		$this->debug($var, 'unknown var type: ' . $var->getType());
 	}
 
 	protected function removeTagsForDump(Node $node)
@@ -385,12 +437,9 @@ class VarStackVisitor extends NodeVisitorAbstract
 			} else {
 				echo get_class($node) . ", depth: " . count($this->nodeStack) . "\n";
 			}
-			$from = $node->getStartLine();
-			$to = $node->getEndLine();
-			$lines = array_slice($this->currentLines, $from-1, $to-$from+1);
+			$sourceInfo = $this->getSourceInfo($node);
 			printf("file:\n%s\nline:%s-%s\ncode:%s\n",
-					$this->currentTarget, $from, $to,
-					implode("\n", $lines)
+					$sourceInfo['file'], $sourceInfo['from'], $sourceInfo['to'], $sourceInfo['code']
 					);
 		} else {
 			var_dump($node);
@@ -447,10 +496,26 @@ class VarStackVisitor extends NodeVisitorAbstract
 		echo "====== }}} ======\n";
 	}
 
-	public function getNodeClosure(Node $node)
+	public static function getNodeClosure(Node $node)
 	{
 		// TODO, ensure 'closure' attribute has no conflict with other usages
 		return $node->getAttribute('closure');
+	}
+
+	public static function getNodeClass(Node $node)
+	{
+		$closure = self::getNodeClosure($node);
+		if (!$closure) return null;
+		if (strpos($closure, '::') === false) return $closure;
+		return explode('::', $closure)[0];	
+	}
+
+	public static function getNodeMethod(Node $node)
+	{
+		$closure = self::getNodeClosure($node);
+		if (!$closure) return null;
+		if (strpos($closure, '::') === false) return null;
+		return explode('::', $closure)[1];	
 	}
 
 	public function trace($message)
@@ -461,6 +526,20 @@ class VarStackVisitor extends NodeVisitorAbstract
 	public function resetTrace()
 	{
 		$this->traceInfoStack = [];
+	}
+
+	public function getSourceInfo(Node $node)
+	{
+		$from = $node->getStartLine();
+		$to = $node->getEndLine();
+		$file = $node->getAttribute('file');
+		$code = '';
+		// TODO, cache lines
+		$lines = explode("\n", file_get_contents($file));
+		if (!empty($lines) && count($lines) >= $to) {
+			$code = implode("\n", array_slice($lines, $from - 1, $to - $from + 1));
+		}
+		return ['from' => $from, 'to' => $to, 'code' => $code, 'file' => $file];
 	}
 
 }

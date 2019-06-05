@@ -7,7 +7,9 @@ require 'vendor/autoload.php';
 
 require 'VarStackVisitor.php';
 require 'MethodCallFinder.php';
-require 'SQLException.php';
+require 'ClassLocator.php';
+require 'DBCall.php';
+require_once 'Logger.php';
 
 use PhpParser\{Node, NodeVisitorAbstract, NodeTraverser};
 use PhpParser\{Parser, ParserFactory};
@@ -17,17 +19,18 @@ class DBCallFinder extends VarStackVisitor
 {
 
 	private $nodesToCheck = [];
-	protected $dbCalls = null;
 
 	public function getDBCalls()
 	{
-		if ($this->dbCalls === null) {
-			$this->dbCalls = [];
-			foreach ($this->nodesToCheck as $node) {
-				$this->checkNode($node);
+		if ($this->nodesToCheck) {
+			Logger::info('checking ' . count($this->nodesToCheck) . ' marked nodes');
+			foreach ($this->nodesToCheck as list($node, $type)) {
+				$checkFunc = 'checkNodeWith' . $type;
+				$this->$checkFunc($node);
 			}
+			$this->nodesToCheck = [];
 		}
-		return $this->dbCalls;
+		return DBCall::$dbCalls;
 	}
 
 	public function beforeTraverse(array $nodes)
@@ -40,11 +43,26 @@ class DBCallFinder extends VarStackVisitor
 		parent::enterNode($node);
 		if ($node instanceof Node\Expr\MethodCall
 			&& strtolower($node->name->name) == 'createcommand') {
-			$this->nodesToCheck []= $node;
+			$this->nodesToCheck []= [$node, 'Command'];
+		}
+		if ($node instanceof Node\Expr\MethodCall
+			&& $node->var instanceof Node\Expr\StaticCall
+			&& strtolower($node->var->name->name) == 'model'
+			) {
+
+			switch (strtolower($node->name->name)) {
+			case 'findall':
+			case 'find':
+				$this->nodesToCheck []= [$node, 'ModelFind'];
+				break;
+			case 'findbypk':
+				$this->nodesToCheck []= [$node, 'ModelPK'];
+				break;
+			}
 		}
 	}
 
-	protected function checkNode(Node $node)
+	protected function checkNodeWithCommand(Node $node)
 	{
 		$this->resetTrace();
 		$this->trace(sprintf('%s:(%s)  %s: %s', __METHOD__, __LINE__, $this->getNodeClosure($node), $node->getStartLine()));
@@ -80,7 +98,10 @@ class DBCallFinder extends VarStackVisitor
 							if (strpos($tableName, '.') !== false) {
 								list($currentDBName, $tableName) = explode('.', $tableName);
 							}
-							$this->registerDBCalls('commandCall_' . $methodName, $currentDBName, $tableName, '');
+							DBCall::registerDBCallsFromNode($node, [
+								'db' => $currentDBName,
+								'table' => $tableName,
+								]);
 						}
 					}
 					$dbCallFound = true;
@@ -97,11 +118,143 @@ class DBCallFinder extends VarStackVisitor
 		}
 	}
 
+	protected function checkNodeWithModelFind(Node $node)
+	{
+		$this->resetTrace();
+		$this->trace(sprintf('%s:(%s)  %s: %s', __METHOD__, __LINE__, $this->getNodeClosure($node), $node->getStartLine()));
+		$class = implode('\\', $node->var->class->parts);
+		$locator = new ClassLocator($node->getAttribute('file'), $class, $this->root);
+		$classInfo = $locator->getClassInfo();
+		if (null == $classInfo) return;
+
+		// TODO, check if is a record class
+		if (empty($node->args)) {
+			foreach ($classInfo->getYiiDBNames() as $dbName) {
+				foreach ($classInfo->getYiiTableNames() as $tableName) {
+					// find without args is safe, no sql checking required
+					// just register db call
+					// TODO, get the real id
+					$sqlSample = 'SELECT * FROM ' . $tableName . ' WHERE __pk = __1';
+					DBCall::registerDBCallsFromNode($node, [
+						'db' => $dbName,
+						'table' => $tableName,
+						'sql' => $sqlSample,
+						]);
+				}
+			}
+		} else {
+			$sqlVar = $node->args[0]->value;
+			if ($sqlVar instanceof Node\Expr\Array_) {
+				// find with criteria array
+				foreach ($classInfo->getYiiDBNames() as $dbName) {
+					foreach ($classInfo->getYiiTableNames() as $tableName) {
+						$this->checkSQLCriteria($sqlVar, $dbName, $tableName);
+					}
+				}
+			} else {
+				foreach ($classInfo->getYiiDBNames() as $dbName) {
+					foreach ($classInfo->getYiiTableNames() as $tableName) {
+						$this->checkSQL($node, $dbName, $sqlVar, 'SELECT * FROM ' . $tableName . ' ');
+					}
+				}
+			}
+		}
+	}
+
+	protected function checkNodeWithModelPK(Node $node)
+	{
+		$this->resetTrace();
+		$this->trace(sprintf('%s:(%s)  %s: %s', __METHOD__, __LINE__, $this->getNodeClosure($node), $node->getStartLine()));
+		$class = implode('\\', $node->var->class->parts);
+		$locator = new ClassLocator($node->getAttribute('file'), $class, $this->root);
+		$classInfo = $locator->getClassInfo();
+		if (null == $classInfo) return;
+
+		// TODO, check if is a record class
+		foreach ($classInfo->getYiiDBNames() as $dbName) {
+			foreach ($classInfo->getYiiTableNames() as $tableName) {
+				// query by primary key is safe, no sql checking required
+				// just register db call
+				// TODO, get the real id
+				$sqlSample = 'SELECT * FROM ' . $tableName . ' WHERE __pk = __1';
+				DBCall::registerDBCallsFromNode($node, [
+					'db' => $dbName,
+					'table' => $tableName,
+					'sql' => $sqlSample,
+					]);
+				}
+		}
+	}
+
+	protected function checkSQLCriteria(Node $criteria, string $dbName, string $tableName = null)
+	{
+		$this->trace(sprintf('%s:(%s)  db:%s, criteria:%s, line:%s', __METHOD__, __LINE__,
+				$dbName, $this->getVarIdentifier($criteria), $criteria->getStartLine()));
+		if ($criteria instanceof Node\Expr\Array_) {
+			// TODO, currently just select implemented
+			$select = '*';
+			$where = null;
+			$params = [];
+			foreach ($criteria->items as $item) {
+				if (!$item->key instanceof Node\Scalar\String_) {
+					$this->debug($item->key, 'unknown criteria array key type: ' . $item->key->getType());
+					continue;
+				}
+				// for all samples, just get the first to build and check
+				switch (strtolower($item->key->value)) {
+				case 'select':
+					foreach ($this->buildSQLSamplesFromExpr($item->value) as $selectSample) {
+						$select = $selectSample;
+						break;
+					}
+					break;
+				case 'condition':
+					foreach ($this->buildSQLSamplesFromExpr($item->value) as $whereSample) {
+						$where = $whereSample;
+						break;
+					}
+					break;
+				case 'params':
+					// ignore the exact value, replace with sample, because params binding is safe
+					if (!$item->value instanceof Node\Expr\Array_) {
+						$this->debug($item->value, 'unknown item value found');
+						break;
+					}
+					foreach ($item->value->items as $param) {
+						if (!$param->key instanceof Node\Scalar\String_) {
+							$this->debug($param->key, 'unknown criteria array key type: ' . $param->key->getType());
+							continue;
+						}
+						$params[$param->key->value] = str_replace(':', '', $param->key->value);
+					}
+					break;
+				case 'order': // ignore, not important
+				case 'limit': // ignore, not important
+					break;
+				default: 
+					$this->debug($item->key, 'unsupported criteria array key: ' . $item->key->value);
+				}
+			}
+			$sqlSample = sprintf('SELECT %s FROM %s', $select, $tableName);
+			if ($where) {
+				$where = str_replace(array_keys($params), array_values($params), $where);
+				$sqlSample .= ' WHERE ' . $where;
+			}
+			foreach ($this->checkSQLSample($criteria, $dbName, $sqlSample) as $checkResult) {
+				list($sqlSample, $errorMessage) = $checkResult;
+				Warning::addWarning($node->getAttribute('file'), $sqlSample, $sqlExpr, $errorMessage);
+			}
+
+		} else {
+			$this->debug($criteria, 'unknown criteria type: ' . $criteria->getType());
+		}
+	}
+
 	/**
 	 * generator function
 	 * yields [sql, errorMessage] as warning
 	 */
-	protected function checkSQLSample($node, $dbName, $sqlSample)
+	protected function checkSQLSample(Node $node, string $dbName, string $sqlSample)
 	{
 		$this->trace(sprintf('%s:(%s)  %s', __METHOD__, __LINE__, $sqlSample));
 
@@ -146,17 +299,22 @@ class DBCallFinder extends VarStackVisitor
 		}
 		$tables = $this->getTablesFromParsedSQL($sqlParser->parsed);
 		foreach ($tables as $table) {
-			$this->registerDBCalls('fromSQLSample', $dbName, $table, $sqlSample);
+			DBCall::registerDBCallsFromNode($node, [
+				'db' => $dbName,
+				'table' => $table,
+				'sql' => $sqlSample,
+				]);
 		}
 	}
 
-	protected function checkSQL(Node $node, string $dbName, Node\Expr $sqlExpr)
+	protected function checkSQL(Node $node, string $dbName, Node\Expr $sqlExpr, string $prefix = null)
 	{
-		$this->trace(sprintf('%s:(%s)  db:%s, sqlvar:%s, line:%s', __METHOD__, __LINE__,
-				$dbName, $this->getVarIdentifier($sqlExpr), $sqlExpr->getStartLine()));
+		$this->trace(sprintf('%s:(%s)  db:%s, sqlvar:%s, line:%s, prefix:%s', __METHOD__, __LINE__,
+				$dbName, $this->getVarIdentifier($sqlExpr), $sqlExpr->getStartLine(), $prefix));
 		$sqlSamples = $this->buildSQLSamplesFromExpr($sqlExpr);
 		foreach ($sqlSamples as $sqlSample) {
 
+			if ($prefix) $sqlSample = $prefix . $sqlSample;
 			foreach ($this->checkSQLSample($node, $dbName, $sqlSample) as $checkResult) {
 				list($sqlSample, $errorMessage) = $checkResult;
 				Warning::addWarning($node->getAttribute('file'), $sqlSample, $sqlExpr, $errorMessage);
@@ -254,17 +412,6 @@ class DBCallFinder extends VarStackVisitor
 		yield 'PARAM::' . $expr->var->name;
 	}
 
-	public function buildSQLSamplesFromExprType_Expr_BinaryOp_Concat(Node\Expr\BinaryOp\Concat $expr)
-	{
-		$left = $this->buildSQLSamplesFromExpr($expr->left);
-		$right = $this->buildSQLSamplesFromExpr($expr->right);
-		foreach ($left as $l) {
-			foreach ($right as $r) {
-				yield $l . $r;
-			}
-		}
-	}
-
 	public function buildSQLSamplesFromExprType_Expr_ArrayDimFetch(Node\Expr\ArrayDimFetch $expr)
 	{
 		// FIXME
@@ -339,6 +486,45 @@ class DBCallFinder extends VarStackVisitor
 		yield 'CONST::' . $const;
 	}
 
+	public function buildSQLSamplesFromExprType_Expr_BinaryOp_Mul(Node\Expr\BinaryOp $expr)
+	{
+		// just return a sample
+		return 2.34;
+	}
+
+	public function buildSQLSamplesFromExprType_Expr_BinaryOp_Div(Node\Expr\BinaryOp $expr)
+	{
+		// just return a sample
+		return 3.45;
+	}
+
+	public function buildSQLSamplesFromExprType_Expr_BinaryOp_Minus(Node\Expr\BinaryOp $expr)
+	{
+		// just return a sample
+		return 4.56;
+	}
+
+	public function buildSQLSamplesFromExprType_Expr_BinaryOp_Concat(Node\Expr\BinaryOp\Concat $expr)
+	{
+		$left = $this->buildSQLSamplesFromExpr($expr->left);
+		$right = $this->buildSQLSamplesFromExpr($expr->right);
+		foreach ($left as $l) {
+			foreach ($right as $r) {
+				yield $l . $r;
+			}
+		}
+	}
+
+	public function buildSQLSamplesFromExprType_Expr_New(Node\Expr\New_ $expr)
+	{
+		// TODO
+		// cdbcriteria here, could be explored deep
+		// debug this:
+		// ./db_reference_finder -t  sample/mis-rtb/protected/models//DspBaseModel.php -r sample/mis-rtb/
+		yield 'CLASS::' . implode('\\', $expr->class->parts);
+	}
+
+
 	/**
 		if ($expr instanceof Node\Param) {
 			// if sql variable is a param of private method
@@ -369,20 +555,6 @@ class DBCallFinder extends VarStackVisitor
 				return;
 			}
 		}
-		 */
-		// if ($expr instanceof Node\Expr\BinaryOp) {
-		// 	if ($expr instanceof Node\Expr\BinaryOp\Concat) {
-		// 		// $a . $b
-		// 	} elseif ($expr instanceof Node\Expr\BinaryOp\Div) {
-		// 		// $a / $b, so this part got a number, just give a sample number
-		// 		yield 1.23;
-		// 	} elseif ($expr instanceof Node\Expr\BinaryOp\Mul) {
-		// 		yield 2.34;
-		// 	} elseif ($expr instanceof Node\Expr\BinaryOp\Minus) {
-		// 		yield 3.45;
-		// 	} else {
-		// 		$this->debug($expr, 'unsupported binary op type');
-		// 	}
 
 		// } elseif ($expr instanceof \Node\Expr\Cast) {
 		// 	// ignore all casts
@@ -551,14 +723,6 @@ class DBCallFinder extends VarStackVisitor
 				yield trim($strSample);
 			}
 		}
-	}
-
-	protected function registerDBCalls($keyword, $dbName, $tableName, $sqlSample)
-	{
-		if (null === $this->dbCalls) {
-			$this->dbCalls = [];
-		}
-		$this->dbCalls []= [$keyword, $dbName, $tableName, $sqlSample];
 	}
 
 	/**

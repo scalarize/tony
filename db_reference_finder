@@ -19,11 +19,12 @@ use TonyParser\{RecordClassFinder, ClassInfo, Warning, DBCallFinder};
 
 function usage() {
 	global $argv;
-	echo "Usage: php $argv[0] -t <target_file_or_dir> -m [mode]\n";
+	echo "Usage: php $argv[0] -t <target_file_or_dir> -m [mode] -r [search_root]\n";
 }
 
-$args = getopt('t:m:');
+$args = getopt('t:m:r:');
 $target = $args['t'];
+$root = $args['r'] ? $args['r'] : $target;
 $mode = empty($args['m']) ? 'plain' : $args['m'];
 
 if (empty($target)) {
@@ -32,7 +33,7 @@ if (empty($target)) {
 }
 
 echo "finding sql commands ... \n";
-$finder = new DBCallFinder($target);
+$finder = new DBCallFinder($target, $root);
 $finder->traverse();
 $dbCalls = $finder->getDBCalls();
 echo "  found " . count($dbCalls) . " sql commands ... \n";
