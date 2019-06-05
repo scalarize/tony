@@ -2,16 +2,14 @@
 <?php declare(strict_types=1);
 /** vim: set noet ts=4 sw=4 fdm=indent: */
 
+set_time_limit(0);
+ini_set('display_errors', 'on');
 ini_set('memory_limit', '1024m');
 
 require 'vendor/autoload.php';
 
-require 'RecordClassFinder.php';
-require 'ClassInfo.php';
-require 'Warning.php';
-require 'Colors.php';
-
-require 'DBCallFinder.php';
+require_once 'RecordClassFinder.php';
+require_once 'DBCallFinder.php';
 
 use PhpParser\{Node, NodeFinder};
 use PhpParser\{Parser, ParserFactory};
@@ -19,7 +17,7 @@ use TonyParser\{RecordClassFinder, ClassInfo, Warning, DBCallFinder};
 
 function usage() {
 	global $argv;
-	echo "Usage: php $argv[0] -t <target_file_or_dir> -m [mode] -r [search_root]\n";
+	echo "Usage: ./$argv[0] -t <target_file_or_dir> -m [mode] -r [search_root]\n";
 }
 
 $args = getopt('t:m:r:');
@@ -91,8 +89,6 @@ foreach ($tables as $name => $classInfos) {
 
 foreach (Warning::getWarnings() as $warn) {
 	$info = $warn->getExpr($mode);
-	//if (strpos($info, 'INJECTION') !== false) {
-		echo $info;
-	//}
+	echo $info;
 }
 

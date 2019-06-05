@@ -122,9 +122,8 @@ class DBCallFinder extends VarStackVisitor
 	{
 		$this->resetTrace();
 		$this->trace(sprintf('%s:(%s)  %s: %s', __METHOD__, __LINE__, $this->getNodeClosure($node), $node->getStartLine()));
-		$class = implode('\\', $node->var->class->parts);
-		$locator = new ClassLocator($node->getAttribute('file'), $class, $this->root);
-		$classInfo = $locator->getClassInfo();
+		$className = implode('\\', $node->var->class->parts);
+		$classInfo = ClassLocator::locateClass($className, $this->root);
 		if (null == $classInfo) return;
 
 		// TODO, check if is a record class
@@ -165,9 +164,8 @@ class DBCallFinder extends VarStackVisitor
 	{
 		$this->resetTrace();
 		$this->trace(sprintf('%s:(%s)  %s: %s', __METHOD__, __LINE__, $this->getNodeClosure($node), $node->getStartLine()));
-		$class = implode('\\', $node->var->class->parts);
-		$locator = new ClassLocator($node->getAttribute('file'), $class, $this->root);
-		$classInfo = $locator->getClassInfo();
+		$className = implode('\\', $node->var->class->parts);
+		$classInfo = ClassLocator::locateClass($className, $this->root);
 		if (null == $classInfo) return;
 
 		// TODO, check if is a record class
@@ -182,7 +180,7 @@ class DBCallFinder extends VarStackVisitor
 					'table' => $tableName,
 					'sql' => $sqlSample,
 					]);
-				}
+			}
 		}
 	}
 

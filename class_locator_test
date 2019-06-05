@@ -37,3 +37,7 @@ if ($found) {
 	}
 }
 
+foreach (Warning::getWarnings() as $warn) {
+	$info = $warn->getExpr($mode);
+	echo $info;
+}
