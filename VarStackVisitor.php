@@ -6,6 +6,7 @@ namespace TonyParser;
 require 'vendor/autoload.php';
 
 require_once 'Logger.php';
+require_once 'SourceFile.php';
 
 use PhpParser\{Node, NodeVisitorAbstract, NodeTraverser};
 use PhpParser\{Parser, ParserFactory};
@@ -25,7 +26,6 @@ class VarStackVisitor extends NodeVisitorAbstract
 	private $target;
 	private $vars;
 	private $currentTarget;
-	private $currentLines;
 
 	// to track node relationship
 	private $nodeStack = [];
@@ -38,7 +38,6 @@ class VarStackVisitor extends NodeVisitorAbstract
 
 	private $currentClass;
 	private $currentMethod;
-	private $classStack;
 
 	public function __construct($target, $root = null)
 	{
@@ -49,13 +48,12 @@ class VarStackVisitor extends NodeVisitorAbstract
 		$this->root = $root ? $root : $target;
 
 		$this->state = self::NOT_STARTED;
-		$this->classStack = [];
 	}
 
 	/** @override */
 	public function beforeTraverse(array $nodes)
 	{
-		Logger::info('trying to traverse ' . $this->currentTarget);
+		//Logger::info('trying to traverse ' . $this->currentTarget);
 		$this->vars = [];
 		$this->nodeStack = [];
 		$this->state = self::GLOBAL_SCOPE;
@@ -75,7 +73,6 @@ class VarStackVisitor extends NodeVisitorAbstract
 		if ($node instanceof Node\Stmt\Class_) {
 			$this->currentClass = $node;
 			$this->state = self::CLASS_INSIDE;
-			$this->registerClass($node);
 		} elseif ($node instanceof Node\Stmt\ClassMethod) {
 			$this->currentMethod = $node;
 			$this->state = self::METHOD_INSIDE;
@@ -299,36 +296,14 @@ class VarStackVisitor extends NodeVisitorAbstract
 
 	public function traverse()
 	{
-		$this->traverseTarget($this->target);
-	}
-
-	protected function traverseTarget($target)
-	{
-		if (is_dir($target)) {
-			foreach (scandir($target) as $item) {
-				if ($item === '.') continue;
-				if ($item === '..') continue;
-				$currentTarget = $target . '/' . $item;
-				$this->traverseTarget($currentTarget);
-			}
+		SourceFile::registerSourceFile($this->target);
+		foreach (SourceFile::getRegisteredSourceFiles() as $sourceFile) {
+			$this->currentTarget = $sourceFile->getFilename();
+			$nodes = $sourceFile->getParsedNodes();
+			$traverser = new NodeTraverser;
+			$traverser->addVisitor($this);
+			$traverser->traverse($nodes);
 		}
-		if (!is_file($target)) {
-			return;
-		}
-		if (substr($target, -4) !== '.php') {
-			return;
-		}
-
-		$this->currentTarget = $target;
-		$codes = file_get_contents($target);
-		$this->currentLines = explode("\n", $codes);
-
-		$parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP5); # or PREFER_PHP7, if your code is pure php7
-		$nodes = $parser->parse($codes);
-
-		$traverser = new NodeTraverser;
-		$traverser->addVisitor($this);
-		$traverser->traverse($nodes);
 	}
 
 	public function getVarStacks()
@@ -459,28 +434,6 @@ class VarStackVisitor extends NodeVisitorAbstract
 		} else {
 			echo "$message\n\n";
 		}
-	}
-
-	protected function registerClass(Node\Stmt\Class_ $node)
-	{
-		if (isset($this->classStack[$node->name->name])) {
-			Warning::addWarning($this->currentTarget, $node->name->name, $node, 'duplicate class found: ' . $node->name->name);
-			// ignore
-			return;
-		}
-		$this->classStack[$node->name->name] = $node;
-	}
-
-	public function getAncestorName($className)
-	{
-		if (!isset($this->classStack[$className])) {
-			return null;
-		}
-		$classNode = $this->classStack[$className];
-		if (!$classNode->extends instanceof Node\Name) {
-			return null;
-		}
-		return implode('\\', $classNode->extends->parts);
 	}
 
 	public function dumpVars($expectedClosure = null)
