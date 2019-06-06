@@ -23,10 +23,16 @@ class DBCallFinder extends VarStackVisitor
 	public function getDBCalls()
 	{
 		if ($this->nodesToCheck) {
-			Logger::info('checking ' . count($this->nodesToCheck) . ' marked nodes');
-			foreach ($this->nodesToCheck as list($node, $type)) {
-				$checkFunc = 'checkNodeWith' . $type;
-				$this->$checkFunc($node);
+			foreach ($this->nodesToCheck as $filename => $nodes) {
+				Logger::info('checking ' . count($this->nodesToCheck) . ' marked nodes, from ' . $filename);
+				foreach ($nodes as list($node, $type)) {
+					$checkFunc = 'checkNodeWith' . $type;
+					Logger::info("checking node with $checkFunc, source: " . $node->getAttribute('file') . ", line: " . $node->getStartLine());
+					$this->$checkFunc($node);
+				}
+				// try to reduce memory usage
+				$sourceFile = SourceFile::getSourceFile($filename);
+				if ($sourceFile) $sourceFile->clearCache();
 			}
 			$this->nodesToCheck = [];
 		}
@@ -43,7 +49,7 @@ class DBCallFinder extends VarStackVisitor
 		parent::enterNode($node);
 		if ($node instanceof Node\Expr\MethodCall
 			&& strtolower($node->name->name) == 'createcommand') {
-			$this->nodesToCheck []= [$node, 'Command'];
+			$this->markNodeToCheck($node, 'Command');
 		}
 		if ($node instanceof Node\Expr\MethodCall
 			&& $node->var instanceof Node\Expr\StaticCall
@@ -53,13 +59,20 @@ class DBCallFinder extends VarStackVisitor
 			switch (strtolower($node->name->name)) {
 			case 'findall':
 			case 'find':
-				$this->nodesToCheck []= [$node, 'ModelFind'];
+				$this->markNodeToCheck($node, 'ModelFind');
 				break;
 			case 'findbypk':
-				$this->nodesToCheck []= [$node, 'ModelPK'];
+				$this->markNodeToCheck($node, 'ModelPK');
 				break;
 			}
 		}
+	}
+
+	protected function markNodeToCheck(Node $node, string $checkType)
+	{
+		$file = $node->getAttribute('file');
+		if (!isset($this->nodesToCheck[$file])) $this->nodesToCheck[$file] = [];
+		$this->nodesToCheck[$file] []= [$node, $checkType];
 	}
 
 	protected function checkNodeWithCommand(Node $node)
@@ -122,7 +135,18 @@ class DBCallFinder extends VarStackVisitor
 	{
 		$this->resetTrace();
 		$this->trace(sprintf('%s:(%s)  %s: %s', __METHOD__, __LINE__, $this->getNodeClosure($node), $node->getStartLine()));
-		$className = implode('\\', $node->var->class->parts);
+		if ($node->var->class instanceof Node\Expr) {
+			// FIXME, /data/jianghao/git/tony/sample/mis-rtb/protected/models/task/AddTaskModel.php
+			$classNameVar = $this->getVariableExpr($node->var->class);
+			if ($classNameVar instanceof Node\Scalar\String_) {
+				$className = $classNameVar->value;
+			}
+		} elseif ($node->var->class instanceof Node\Name) {
+			$className = implode('\\', $node->var->class->parts);
+		}
+		if (empty($className)) {
+			$this->debug($node->var->class, 'unsupported class type');
+		}
 		$classInfo = ClassLocator::locateClass($className, $this->root);
 		if (null == $classInfo) return;
 
@@ -150,7 +174,7 @@ class DBCallFinder extends VarStackVisitor
 						$this->checkSQLCriteria($sqlVar, $dbName, $tableName);
 					}
 				}
-			} else {
+			} else { // TODO, find with criteria object is not implemented
 				foreach ($classInfo->getYiiDBNames() as $dbName) {
 					foreach ($classInfo->getYiiTableNames() as $tableName) {
 						$this->checkSQL($node, $dbName, $node->args[0]->value, 'SELECT * FROM ' . $tableName . ' ');

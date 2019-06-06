@@ -243,8 +243,8 @@ class VarStackVisitor extends NodeVisitorAbstract
 
 		$target = $node->getAttribute('file');
 		if (!isset($this->varStacks[$closure])) {
-			foreach ($this->loadVarsFromCache($target) as $closure => $vars) {
-				$this->varStacks[$closure] = $vars;
+			foreach ($this->loadVarsFromCache($target) as $c => $vars) {
+				$this->varStacks[$c] = $vars;
 			}
 		}
 
