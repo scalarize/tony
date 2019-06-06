@@ -8,7 +8,7 @@ class Logger
 
 	public static function info($message)
 	{
-		printf("[%s] INFO: %s\n", date('Y-m-d H:i:s'), $message);
+		printf("[%s] <%d> INFO: %s\n", date('Y-m-d H:i:s'), memory_get_usage(), $message);
 		flush();
 	}
 
