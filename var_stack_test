@@ -39,6 +39,7 @@ foreach ($visitor->getVarStacks() as $section => $vars) {
 		__show_vars($vars);
 	}
 }
+$visitor->dumpVars();
 
 function __show_vars($vars)
 {

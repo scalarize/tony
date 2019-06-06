@@ -85,6 +85,7 @@ class VarStackVisitor extends NodeVisitorAbstract
 	/** @override */
 	public function leaveNode(Node $node)
 	{
+		Logger::INFO("leaving node: " . $node->getStartLine() . $node->getType() . " vars now: " . count($this->varStacks));
 		$node = array_pop($this->nodeStack);
 		$closure = $this->getCurrentClosure();
 		if ($node instanceof Node\Stmt\Class_) {
@@ -449,12 +450,21 @@ class VarStackVisitor extends NodeVisitorAbstract
 
 	public function dumpVars($expectedClosure = null)
 	{
+		if (empty($this->varStacks)) {
+			$this->varStacks = $this->loadVarsFromCache($this->target);
+		}
 		echo "====== DUMPING VARS {{{ ======\n";
 		foreach ($this->varStacks as $closure => $vars) {
 			if ($expectedClosure && $closure != $expectedClosure) continue;
 			echo "=== $closure ===\n";
 			foreach ($vars as $name => $varArr) {
-				echo "  $name => " . $varArr[count($varArr) - 1]->getType() . "\n";
+				if (array_keys($varArr)[0] !== 0) {
+					foreach ($varArr as $subname => $subVarArr) {
+						echo "  $subname => " . $subVarArr[count($subVarArr) - 1]->getType() . "\n";
+					}
+				} else {
+					echo "  $name => " . $varArr[count($varArr) - 1]->getType() . "\n";
+				}
 			}
 		}
 		echo "====== }}} ======\n";
