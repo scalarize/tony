@@ -312,11 +312,6 @@ class VarStackVisitor extends NodeVisitorAbstract
 		}
 	}
 
-	public function getVarStacks()
-	{
-		return $this->varStacks;
-	}
-
 	/** @return null means no identifier required */
 	protected function getVarIdentifier($var)
 	{
