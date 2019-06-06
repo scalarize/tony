@@ -24,7 +24,7 @@ class DBCallFinder extends VarStackVisitor
 	{
 		if ($this->nodesToCheck) {
 			foreach ($this->nodesToCheck as $filename => $nodes) {
-				Logger::info('checking ' . count($this->nodesToCheck) . ' marked nodes, from ' . $filename);
+				Logger::info('checking ' . count($nodes) . ' marked nodes, from ' . $filename);
 				foreach ($nodes as list($node, $type)) {
 					$checkFunc = 'checkNodeWith' . $type;
 					Logger::info("checking node with $checkFunc, source: " . $node->getAttribute('file') . ", line: " . $node->getStartLine());
