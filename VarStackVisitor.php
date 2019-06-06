@@ -85,7 +85,6 @@ class VarStackVisitor extends NodeVisitorAbstract
 	/** @override */
 	public function leaveNode(Node $node)
 	{
-		Logger::INFO("leaving node: " . $node->getStartLine() . $node->getType() . " vars now: " . count($this->varStacks));
 		$node = array_pop($this->nodeStack);
 		$closure = $this->getCurrentClosure();
 		if ($node instanceof Node\Stmt\Class_) {
@@ -244,7 +243,9 @@ class VarStackVisitor extends NodeVisitorAbstract
 
 		$target = $node->getAttribute('file');
 		if (!isset($this->varStacks[$closure])) {
-			$this->varStacks = $this->loadVarsFromCache($target);
+			foreach ($this->loadVarsFromCache($target) as $closure => $vars) {
+				$this->varStacks[$closure] = $vars;
+			}
 		}
 
 		if (isset($this->varStacks[$closure][$varName])) {
