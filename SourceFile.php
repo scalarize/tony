@@ -129,5 +129,17 @@ final class SourceFile
 		 */
 	}
 
+	/**
+	 * clear cache values to reduce memory usage
+	 * expected to be called when this source file is processed
+	 * cleared vars can be re-loaded whenever in need
+	 */
+	public function clearCache()
+	{
+		$this->content = null;
+		$this->lines = null;
+		$this->nodes = null;
+	}
+
 }
 
