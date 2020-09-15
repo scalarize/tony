@@ -33,6 +33,7 @@ class DBCallFinder extends VarStackVisitor
 				// try to reduce memory usage
 				$sourceFile = SourceFile::getSourceFile($filename);
 				if ($sourceFile) $sourceFile->clearCache();
+				$this->clearCache($filename);
 			}
 			$this->nodesToCheck = [];
 		}

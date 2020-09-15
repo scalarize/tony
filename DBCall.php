@@ -41,9 +41,3 @@ class DBCall
 
 }
 
-// simple test
-if ($argv && $argv[0] == 'DBCall.php') {
-	DBCall::registerDBCall(['db' => 'rtb']);
-	print_r(DBCall::$dbCalls);
-}
-

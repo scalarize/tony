@@ -89,7 +89,7 @@ class VarStackVisitor extends NodeVisitorAbstract
 		$closure = $this->getCurrentClosure();
 		if ($node instanceof Node\Stmt\Class_) {
 			if (!empty($this->vars['class'])) {
-				$this->varStacks[$closure] = $this->vars['class'];
+				$this->varStacks[$this->currentTarget][$closure] = $this->vars['class'];
 				$this->vars['class'] = []; 
 			}
 			$this->state = self::GLOBAL_SCOPE;
@@ -102,7 +102,7 @@ class VarStackVisitor extends NodeVisitorAbstract
 			}
 
 			if (!empty($this->vars['method'])) {
-				$this->varStacks[$closure] = $this->vars['method'];
+				$this->varStacks[$this->currentTarget][$closure] = $this->vars['method'];
 				$this->vars['method'] = []; 
 			}
 			$this->state = self::CLASS_INSIDE;
@@ -148,11 +148,11 @@ class VarStackVisitor extends NodeVisitorAbstract
 			}
 			
 			if (!empty($this->vars['foreach'])) {
-				if (!isset($this->varStacks[$closure . '::FOREACH'])) {
-					$this->varStacks[$closure . '::FOREACH'] = [];
+				if (!isset($this->varStacks[$this->currentTarget][$closure . '::FOREACH'])) {
+					$this->varStacks[$this->currentTarget][$closure . '::FOREACH'] = [];
 				}
 				$range = $node->getStartLine() . '-' . $node->getEndLine();
-				$this->varStacks[$closure . '::FOREACH'][$range] = $this->vars['foreach'];
+				$this->varStacks[$this->currentTarget][$closure . '::FOREACH'][$range] = $this->vars['foreach'];
 				$this->vars['foreach'] = []; 
 			}
 		} elseif ($node instanceof Node\Stmt\ClassConst) {
@@ -242,22 +242,20 @@ class VarStackVisitor extends NodeVisitorAbstract
 		}
 
 		$target = $node->getAttribute('file');
-		if (!isset($this->varStacks[$closure])) {
-			foreach ($this->loadVarsFromCache($target) as $c => $vars) {
-				$this->varStacks[$c] = $vars;
-			}
+		if (!isset($this->varStacks[$target])) {
+			$this->varStacks[$target] = $this->loadVarsFromCache($target);
 		}
 
-		if (isset($this->varStacks[$closure][$varName])) {
-			$vars = $this->varStacks[$closure][$varName];
+		if (isset($this->varStacks[$target][$closure][$varName])) {
+			$vars = $this->varStacks[$target][$closure][$varName];
 			for ($i = count($vars) - 1; $i >= 0; $i--) {
 				if ($vars[$i]->getStartLine() <= $node->getStartLine()) {
 					return $vars[$i];
 				}
 			}
-		} elseif (isset($this->varStacks[$closure . '::FOREACH'])) {
+		} elseif (isset($this->varStacks[$target][$closure . '::FOREACH'])) {
 			// try to lookup foreach vars
-			foreach ($this->varStacks[$closure. '::FOREACH'] as $range => $vars) {
+			foreach ($this->varStacks[$target][$closure. '::FOREACH'] as $range => $vars) {
 				list($from, $to) = explode('-', $range);
 				if (!isset($vars[$varName])) continue;
 				if ($from <= $node->getStartLine() && $to >= $node->getEndLine()) {
@@ -271,15 +269,22 @@ class VarStackVisitor extends NodeVisitorAbstract
 	public function afterTraverse(array $nodes)
 	{
 		if (!empty($this->vars['global'])) {
-			$this->varStacks[$this->currentTarget] = $this->vars['global'];
+			$this->varStacks[$this->currentTarget]['GLOBAL'] = $this->vars['global'];
 			$this->vars = [];
 		}
 		$this->state = self::NOT_STARTED;
 
 		// serialize to reduce memory usage
-		$this->dumpVarsToCache($this->varStacks, $this->currentTarget);
-		$this->varStacks = [];
+		$this->clearCache($this->currentTarget);
 		Logger::info('traverse done for ' . $this->currentTarget);
+	}
+
+	protected function clearCache($target)
+	{
+		if (isset($this->varStacks[$target])) {
+			$this->dumpVarsToCache($this->varStacks[$target], $target);
+		   	unset($this->varStacks[$target]);
+		}
 	}
 
 	private function getCacheName($target)
@@ -447,10 +452,10 @@ class VarStackVisitor extends NodeVisitorAbstract
 	public function dumpVars($expectedClosure = null)
 	{
 		if (empty($this->varStacks)) {
-			$this->varStacks = $this->loadVarsFromCache($this->target);
+			$this->varStacks[$this->target] = $this->loadVarsFromCache($this->target);
 		}
 		echo "====== DUMPING VARS {{{ ======\n";
-		foreach ($this->varStacks as $closure => $vars) {
+		foreach ($this->varStacks[$this->target] as $closure => $vars) {
 			if ($expectedClosure && $closure != $expectedClosure) continue;
 			echo "=== $closure ===\n";
 			foreach ($vars as $name => $varArr) {
